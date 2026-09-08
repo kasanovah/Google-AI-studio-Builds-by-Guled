@@ -1,0 +1,8 @@
+{
+  "name": "XEERO AI REEL STUDIO — MOBILE",
+  "description": "Mobile-first professional 9:16 Somali AI Reel creation studio by Xeero AI. Preserve the existing Reel generation, Somali voice, scene, caption, preview, and MP4 export pipeline while providing a dedicated mobile app experience.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
