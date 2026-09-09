@@ -664,13 +664,16 @@ export async function generateBespokeSceneVisual(params: ResolveVisualParams): P
 export async function resolveSceneVisual(params: ResolveVisualParams): Promise<VisualAssetResult> {
   const publicDir = path.join(process.cwd(), 'public');
 
-  // Case 1: Custom user-uploaded file (e.g. /uploads/flow_video.mp4 or /uploads/image.png)
+  // Case 1: Custom user-uploaded file (e.g. /uploads/flow_video.mp4 or /uploads/image.png).
+  // Only the basename is trusted from the client-supplied URL — it is joined
+  // directly onto the uploads directory so a "../" in the requested URL can
+  // never resolve to a path outside it (path traversal / arbitrary file read).
   const requestedUrl = params.visualUrl || params.videoUrl;
-  if (requestedUrl && (requestedUrl.includes('/uploads/') || requestedUrl.startsWith('data:'))) {
-    const cleanUrl = requestedUrl.replace(/^\//, '');
-    const candidatePath = path.join(publicDir, cleanUrl);
+  if (requestedUrl && requestedUrl.startsWith('/uploads/')) {
+    const safeName = path.basename(requestedUrl);
+    const candidatePath = safeName ? path.join(publicDir, 'uploads', safeName) : '';
 
-    if (fs.existsSync(candidatePath)) {
+    if (candidatePath && fs.existsSync(candidatePath)) {
       const ext = path.extname(candidatePath).toLowerCase();
       const isVideo = ['.mp4', '.webm', '.mov', '.mkv'].includes(ext);
       return {

@@ -79,13 +79,20 @@ export async function synthesizeSomaliVoice(params: VoiceSynthesisParams): Promi
   // =========================================================================
   if (audioUrl) {
     let sourceAudioPath = '';
-    if (audioUrl.startsWith('/uploads/') || audioUrl.startsWith('/audio/') || audioUrl.startsWith('/exports/')) {
-      const candidate = path.join(process.cwd(), 'public', audioUrl.replace(/^\//, ''));
-      if (fs.existsSync(candidate)) {
-        sourceAudioPath = candidate;
+    // Only the basename is trusted from the client-supplied URL — it is
+    // joined directly onto the specific allowed directory so a "../" in the
+    // requested URL can never resolve outside it (path traversal / arbitrary
+    // file read). Arbitrary absolute filesystem paths are never accepted.
+    const allowedDirs = ['uploads', 'audio', 'exports'];
+    for (const dir of allowedDirs) {
+      if (audioUrl.startsWith(`/${dir}/`)) {
+        const safeName = path.basename(audioUrl);
+        const candidate = safeName ? path.join(process.cwd(), 'public', dir, safeName) : '';
+        if (candidate && fs.existsSync(candidate)) {
+          sourceAudioPath = candidate;
+        }
+        break;
       }
-    } else if (fs.existsSync(audioUrl)) {
-      sourceAudioPath = audioUrl;
     }
 
     if (sourceAudioPath) {
