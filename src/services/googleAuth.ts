@@ -13,21 +13,18 @@ import firebaseConfig from '../../firebase-applet-config.json';
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
 
-// All Google Drive scopes configured for the applet
+// Google Drive scope for the applet. Every Drive call this app makes
+// (getOrCreateXeeroFolder, listDriveFiles, uploadVideoToDrive,
+// uploadScriptToDrive, deleteDriveFile) only ever touches the app's own
+// "Xeero AI Reels" folder and the files it creates there, so drive.file —
+// access limited to files/folders the app itself creates or that the user
+// explicitly opens with it — covers 100% of that behavior. The previous
+// scope list additionally requested full read/write access to the user's
+// entire Drive plus a dozen overlapping scopes, none of which this app
+// uses; that's a real privacy/trust cost (and would likely fail Google's
+// OAuth app verification review) for no functional benefit.
 export const GOOGLE_DRIVE_SCOPES = [
-  'https://www.googleapis.com/auth/drive',
-  'https://www.googleapis.com/auth/drive.activity',
-  'https://www.googleapis.com/auth/drive.activity.readonly',
-  'https://www.googleapis.com/auth/drive.appdata',
-  'https://www.googleapis.com/auth/drive.apps.readonly',
   'https://www.googleapis.com/auth/drive.file',
-  'https://www.googleapis.com/auth/drive.install',
-  'https://www.googleapis.com/auth/drive.meet.readonly',
-  'https://www.googleapis.com/auth/drive.metadata',
-  'https://www.googleapis.com/auth/drive.metadata.readonly',
-  'https://www.googleapis.com/auth/drive.photos.readonly',
-  'https://www.googleapis.com/auth/drive.readonly',
-  'https://www.googleapis.com/auth/drive.scripts',
 ];
 
 const provider = new GoogleAuthProvider();

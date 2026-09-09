@@ -8,13 +8,44 @@ import { assembleReelMp4, validateMp4File } from './server/videoAssembler.js';
 const app = express();
 const PORT = 3000;
 
-app.use((_req: Request, res: Response, next: NextFunction) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Range');
-  next();
-});
+// The frontend and this API are always served from the same origin (this
+// same Express app, in both dev and prod), so no cross-origin requests are
+// ever legitimate here. A wide-open `Access-Control-Allow-Origin: *` would
+// let any website on the internet call these endpoints — including the
+// ones that invoke paid Gemini/ElevenLabs APIs and spawn ffmpeg — directly
+// from a visitor's browser. Omitting CORS headers entirely means the
+// browser's default same-origin policy blocks any such cross-site call.
 app.use(express.json({ limit: '50mb' }));
+
+// Minimal in-memory per-IP rate limiter for the expensive endpoints below
+// (AI script generation, ffmpeg/TTS reel assembly, asset uploads). This is a
+// single-process app, so an in-memory window counter is sufficient; it
+// exists to blunt casual abuse/cost-runup, not as a substitute for auth.
+const rateLimitBuckets = new Map<string, { count: number; resetAt: number }>();
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, bucket] of rateLimitBuckets) {
+    if (now > bucket.resetAt) rateLimitBuckets.delete(key);
+  }
+}, 5 * 60 * 1000).unref();
+
+function rateLimit(options: { windowMs: number; max: number }) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const key = req.ip || 'unknown';
+    const now = Date.now();
+    const bucket = rateLimitBuckets.get(key);
+    if (!bucket || now > bucket.resetAt) {
+      rateLimitBuckets.set(key, { count: 1, resetAt: now + options.windowMs });
+      return next();
+    }
+    if (bucket.count >= options.max) {
+      res.setHeader('Retry-After', String(Math.ceil((bucket.resetAt - now) / 1000)));
+      return res.status(429).json({ error: 'Too many requests. Please try again shortly.' });
+    }
+    bucket.count += 1;
+    next();
+  };
+}
 
 const exportsDir = path.join(process.cwd(), 'public', 'exports');
 if (!fs.existsSync(exportsDir)) {
@@ -37,7 +68,7 @@ app.get('/api/health', (_req: Request, res: Response) => {
 });
 
 // Script generation endpoint (offline / deterministic, no Gemini)
-app.post('/api/generate-script', async (req: Request, res: Response) => {
+app.post('/api/generate-script', rateLimit({ windowMs: 10 * 60 * 1000, max: 20 }), async (req: Request, res: Response) => {
   try {
     const { topic, description, targetDuration, pacing, tone, customScript } = req.body;
     if (!topic && !description && !customScript) {
@@ -59,28 +90,43 @@ app.post('/api/generate-script', async (req: Request, res: Response) => {
 });
 
 // Asset upload endpoint for Google Flow MP4 clips, images, and Ubax voice audio
-app.post('/api/upload-asset', async (req: Request, res: Response) => {
+const UPLOAD_MIME_EXTENSIONS: Record<string, string> = {
+  'video/mp4': '.mp4',
+  'video/webm': '.webm',
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+  'image/webp': '.webp',
+  'audio/mpeg': '.mp3',
+  'audio/mp3': '.mp3',
+  'audio/wav': '.wav',
+  'audio/aac': '.aac',
+};
+const MAX_UPLOAD_ASSET_BYTES = 40 * 1024 * 1024; // 40MB decoded
+
+app.post('/api/upload-asset', rateLimit({ windowMs: 10 * 60 * 1000, max: 30 }), async (req: Request, res: Response) => {
   try {
-    const { filename, data, type } = req.body;
-    if (!data) {
+    const { data } = req.body;
+    if (!data || typeof data !== 'string') {
       return res.status(400).json({ error: 'Asset data is required' });
     }
 
-    let base64Data = data;
-    let extension = '.mp4';
-    if (data.includes(';base64,')) {
-      const parts = data.split(';base64,');
-      const mime = parts[0].replace('data:', '');
-      base64Data = parts[1];
-      if (mime.includes('video/mp4')) extension = '.mp4';
-      else if (mime.includes('video/webm')) extension = '.webm';
-      else if (mime.includes('image/jpeg')) extension = '.jpg';
-      else if (mime.includes('image/png')) extension = '.png';
-      else if (mime.includes('audio/mpeg') || mime.includes('audio/mp3')) extension = '.mp3';
-      else if (mime.includes('audio/wav')) extension = '.wav';
-    } else if (filename) {
-      const ext = path.extname(filename).toLowerCase();
-      if (ext) extension = ext;
+    // Trust only the declared MIME type against an explicit allowlist — never
+    // fall back to a guessed/default extension for an unrecognized or
+    // missing MIME type, which previously let arbitrary content be stored
+    // (and immediately web-served) under a trusted-looking extension.
+    if (!data.includes(';base64,')) {
+      return res.status(400).json({ error: 'Asset data must be a data URL (data:<mime>;base64,...)' });
+    }
+    const [header, base64Data] = data.split(';base64,');
+    const mime = header.replace('data:', '').toLowerCase();
+    const extension = UPLOAD_MIME_EXTENSIONS[mime];
+    if (!extension) {
+      return res.status(400).json({ error: `Unsupported asset type: ${mime || 'unknown'}` });
+    }
+
+    const approxBytes = Math.floor((base64Data || '').length * 0.75);
+    if (approxBytes > MAX_UPLOAD_ASSET_BYTES) {
+      return res.status(413).json({ error: 'Asset exceeds the maximum allowed size (40MB)' });
     }
 
     const safeName = `flow_${Date.now()}_${Math.random().toString(36).slice(2, 7)}${extension}`;
@@ -104,7 +150,7 @@ app.post('/api/upload-asset', async (req: Request, res: Response) => {
 });
 
 // Reel Assembly endpoint
-app.post('/api/assemble-reel', async (req: Request, res: Response) => {
+app.post('/api/assemble-reel', rateLimit({ windowMs: 10 * 60 * 1000, max: 6 }), async (req: Request, res: Response) => {
   try {
     const result = await assembleReelMp4(req.body);
     res.json(result);
