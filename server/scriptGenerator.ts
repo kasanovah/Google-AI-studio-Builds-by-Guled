@@ -1275,75 +1275,85 @@ export async function generateScenesWithGemini(params: {
   const approxWordsPerScene = Math.max(8, Math.round(((targetDuration / sceneCount) * 2.6)));
 
 
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = new GoogleGenAI({
+    apiKey,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      },
+    },
+  });
 
-  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+  // Filter out any discontinued/deprecated models (like 2.5, 2.0, 1.5)
+  const envModel = process.env.GEMINI_MODEL?.trim();
+  const isDeprecated = envModel && (
+    envModel.includes('2.5') ||
+    envModel.includes('2.0') ||
+    envModel.includes('1.5') ||
+    envModel.includes('gemini-pro')
+  );
 
+  // Preferred model order: gemini-3.6-flash, gemini-3.1-flash-lite, gemini-3.8-flash, gemini-flash-latest
+  const candidateModels: string[] = [
+    envModel && !isDeprecated ? envModel : 'gemini-3.6-flash',
+    'gemini-3.6-flash',
+    'gemini-3.1-flash-lite',
+    'gemini-3.8-flash',
+    'gemini-flash-latest',
+  ].filter((m, idx, arr) => arr.indexOf(m) === idx);
 
-  const prompt = `You are the senior scriptwriter for Xeero AI, a Somali-language AI/technology media brand. Write a complete 6-scene vertical (9:16) Reel script explaining the following topic to a Somali-speaking audience in Somalia and worldwide.
-
+  const prompt = `You are the senior scriptwriter for Xeero AI, a Somali-language AI/technology media brand. Write a complete 6-scene vertical (9:16) Reel script explaining the following topic to a Somali-speaking audience in Somalia and worldwide.
 
 TOPIC: "${topic}"
-
 ${description ? `ADDITIONAL CONTEXT: "${description}"\n` : ''}
-
 TARGET TOTAL DURATION: ${targetDuration} seconds across exactly 6 scenes (~${Math.round(targetDuration / sceneCount)}s each).
 
-
 STRICT SOMALI LANGUAGE RULES:
-
 - Write "voiceover", "caption", "keyMessage", "subject", "action", and "environment" fields in natural, fluent, professional Somali. Never machine-translated or awkward phrasing. No calques.
-
 - Company and product names (e.g. Google, OpenAI, Nvidia) take FEMININE grammatical agreement in Somali (waxay/ay/-tay), never masculine (wuxuu/uu/-ay).
-
 - Each scene's voiceover should be roughly ${approxWordsPerScene} words — enough to comfortably fill ~${Math.round(targetDuration / sceneCount)} seconds of natural spoken pacing (about 2-3 words per second), not more.
 
-
 STRUCTURE (exactly 6 scenes, in order):
-
 1. Hook — state the problem or surprising fact that makes someone stop scrolling.
-
 2-5. Explanation — build the idea step by step with concrete, specific detail (not vague generalities). Each scene must be visually and narratively distinct from the others — no repeated concepts.
-
 6. Outro/CTA — close with an inspiring one-line takeaway, and set caption to exactly "Ku Xirnow Xeero AI!" (voiceover can vary but should invite the viewer to follow Xeero AI).
 
-
 VISUAL FIELDS (English):
-
 - "visualObjective", "cameraComposition", "visualPrompt", "flowPrompt", and "visualKeywords" must be written in English, describing a premium, cinematic, Bloomberg/Reuters-editorial-style 9:16 visual specific to that exact scene's content — never generic stock-photo description.
-
 - "visualPrompt" is for a still image generator; "flowPrompt" is for a video generator and must start with "Vertical 9:16 cinematic" and end with "24fps".
-
 
 Return ONLY the structured data — no extra commentary.`;
 
+  let lastError: any = null;
+  let rawText: string | undefined;
 
-  const response = await ai.models.generateContent({
+  for (const model of candidateModels) {
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: prompt,
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: GEMINI_SCRIPT_SCHEMA,
+          temperature: 0.9,
+        },
+      });
 
-    model,
+      const text = response.text;
+      if (text && text.trim()) {
+        rawText = text;
+        console.log(`[ScriptGenerator] Successfully generated script using model: ${model}`);
+        break;
+      }
+    } catch (err: any) {
+      lastError = err;
+      console.warn(`[ScriptGenerator] Attempt with model "${model}" failed (${err?.message || err}). Trying fallback model...`);
+    }
+  }
 
-    contents: prompt,
-
-    config: {
-
-      responseMimeType: 'application/json',
-
-      responseSchema: GEMINI_SCRIPT_SCHEMA,
-
-      temperature: 0.9,
-
-    },
-
-  });
-
-
-  const rawText = response.text;
-
-  if (!rawText || !rawText.trim()) {
-
-    throw new Error('Gemini returned an empty response');
-
-  }
+  if (!rawText || !rawText.trim()) {
+    throw new Error(lastError?.message || 'Gemini returned an empty response');
+  }
 
 
   let parsed: { title?: string; scenes?: any[] };
