@@ -1,16 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  X, 
-  Check, 
-  Clock, 
-  Mic, 
-  Type, 
-  Film, 
-  Copy, 
-  Upload, 
-  Sparkles, 
-  CheckCircle2, 
-  AlertCircle 
+import {
+  X,
+  Check,
+  Clock,
+  Mic,
+  Type,
+  Film,
+  Copy,
+  Upload,
+  Sparkles,
+  CheckCircle2,
 } from 'lucide-react';
 import { Scene } from '../../types';
 import { apiFetch } from '../../services/apiClient';

@@ -34,7 +34,7 @@ async function probeAudioDuration(filePath: string): Promise<number> {
     );
     const parsed = parseFloat(stdout.trim());
     return isNaN(parsed) || parsed <= 0 ? 4.0 : parsed;
-  } catch (err) {
+  } catch {
     return 4.0;
   }
 }
@@ -55,10 +55,8 @@ export async function synthesizeSomaliVoice(params: VoiceSynthesisParams): Promi
     text,
     targetDuration,
     outputDir,
-    voiceId = 'ubax-somali',
     voiceName = 'Ubax',
     audioUrl,
-    sceneIndex = 0,
     sceneNumber = 1,
   } = params;
 
@@ -113,7 +111,7 @@ export async function synthesizeSomaliVoice(params: VoiceSynthesisParams): Promi
         };
       } catch (err: any) {
         console.error(`[VoiceProvider] Failed to process attached audio for scene ${sceneNumber}:`, err?.message);
-        throw new Error(`Attached audio processing failed for Scene ${sceneNumber}: ${err?.message}`);
+        throw new Error(`Attached audio processing failed for Scene ${sceneNumber}: ${err?.message}`, { cause: err });
       }
     }
   }
@@ -242,7 +240,8 @@ export async function synthesizeSomaliVoice(params: VoiceSynthesisParams): Promi
   } catch (localErr: any) {
     console.error(`[VoiceProvider] Fatal: Failed to synthesize audio for Scene ${sceneNumber}:`, localErr?.message);
     throw new Error(
-      `Codka muuqaalka ${sceneNumber} waa la waayey (Failed to generate voiceover for Scene ${sceneNumber}): ${localErr?.message}`
+      `Codka muuqaalka ${sceneNumber} waa la waayey (Failed to generate voiceover for Scene ${sceneNumber}): ${localErr?.message}`,
+      { cause: localErr }
     );
   }
 }

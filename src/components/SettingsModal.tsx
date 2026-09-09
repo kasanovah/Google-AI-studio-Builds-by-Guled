@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Settings, CheckCircle2, ShieldCheck, Video, Volume2, Cpu } from 'lucide-react';
+import { X, Settings, CheckCircle2, Volume2, Cpu } from 'lucide-react';
 import { ReelProject } from '../types';
 
 interface SettingsModalProps {
@@ -15,7 +15,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onClose,
   project,
   setProject,
-  backendOnline,
 }) => {
   if (!isOpen) return null;
 

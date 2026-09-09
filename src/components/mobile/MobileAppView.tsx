@@ -56,7 +56,6 @@ export const MobileAppView: React.FC<MobileAppViewProps> = ({
   backendOnline,
   creationError,
   creationStatus,
-  onRetry,
 }) => {
   // Step navigation helper for header back button
   const handleHeaderBack = () => {

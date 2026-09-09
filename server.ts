@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { requireFirebaseAuth } from './server/authMiddleware.js';
 import { generateSomaliScript } from './server/scriptGenerator.js';
-import { assembleReelMp4, AssembleReelResult, validateMp4File } from './server/videoAssembler.js';
+import { assembleReelMp4, AssembleReelResult } from './server/videoAssembler.js';
 
 const app = express();
 const PORT = 3000;

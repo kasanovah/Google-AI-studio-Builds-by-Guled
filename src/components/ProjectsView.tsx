@@ -1,6 +1,6 @@
 
 import React, { useEffect, useState } from 'react';
-import { FolderGit2, Film, Download, Play, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
+import { FolderGit2, Film, Download, Play, AlertCircle, Loader2 } from 'lucide-react';
 import { ExportedReel, formatReelTitle, formatFileSize, formatReelDateSomali } from '../utils/reelFormat';
 
 interface ProjectsViewProps {

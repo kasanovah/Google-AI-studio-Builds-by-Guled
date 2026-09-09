@@ -1,15 +1,12 @@
 import React, { useState } from 'react';
-import { 
-  Mic, 
-  Volume2, 
-  CheckCircle, 
-  Sliders, 
-  Play, 
-  Upload, 
-  CheckCircle2, 
-  Sparkles, 
-  FileAudio, 
-  AlertCircle 
+import {
+  Mic,
+  Volume2,
+  CheckCircle,
+  Sliders,
+  Upload,
+  CheckCircle2,
+  FileAudio,
 } from 'lucide-react';
 import { SOMALI_VOICES } from '../data/defaultProject';
 import { ReelProject, VoiceOption } from '../types';

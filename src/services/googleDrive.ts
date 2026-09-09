@@ -215,7 +215,7 @@ export async function uploadScriptToDrive(params: {
 }): Promise<GoogleDriveFile> {
   const authHeader = await getAuthHeader();
 
-  const filename = `${params.title.replace(/[^a-zA-Z0-9_\-]/g, '_')}_SCRIPT.txt`;
+  const filename = `${params.title.replace(/[^a-zA-Z0-9_-]/g, '_')}_SCRIPT.txt`;
   const metadata: Record<string, any> = {
     name: filename,
     mimeType: 'text/plain',

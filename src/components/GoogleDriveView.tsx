@@ -1,26 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  HardDrive, 
-  Upload, 
-  ExternalLink, 
-  Trash2, 
-  Search, 
-  RefreshCw, 
-  CheckCircle2, 
-  AlertCircle, 
-  Film, 
-  FileText, 
-  Folder, 
+import {
+  HardDrive,
+  Upload,
+  ExternalLink,
+  Trash2,
+  Search,
+  RefreshCw,
+  CheckCircle2,
+  AlertCircle,
+  Film,
+  FileText,
+  Folder,
   FolderPlus,
-  Play,
-  Download,
-  Clock,
-  Sparkles,
   Loader2,
-  X
 } from 'lucide-react';
 import { User } from 'firebase/auth';
-import { subscribeAuth, googleSignIn } from '../services/googleAuth';
+import { subscribeAuth } from '../services/googleAuth';
 import { 
   getOrCreateXeeroFolder, 
   listDriveFiles, 
@@ -41,7 +36,6 @@ interface GoogleDriveViewProps {
 export const GoogleDriveView: React.FC<GoogleDriveViewProps> = ({
   project,
   assembledResult,
-  onSelectReelForPlayback,
 }) => {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);

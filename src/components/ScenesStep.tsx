@@ -1,18 +1,16 @@
 import React, { useState } from 'react';
-import { 
-  Layers, 
-  Clock, 
-  Film, 
-  Copy, 
-  Check, 
-  Upload, 
-  Plus, 
-  Trash2, 
-  Sparkles, 
-  AlertCircle, 
-  CheckCircle2, 
-  Play, 
-  Image as ImageIcon,
+import {
+  Layers,
+  Clock,
+  Film,
+  Copy,
+  Check,
+  Upload,
+  Plus,
+  Trash2,
+  Sparkles,
+  AlertCircle,
+  CheckCircle2,
   Mic
 } from 'lucide-react';
 import { ReelProject, Scene } from '../types';

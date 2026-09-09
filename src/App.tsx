@@ -1,15 +1,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
-import { 
-  Sparkles, 
-  Download, 
-  Eye, 
-  PlusCircle, 
-  RotateCw,
-  Film
-} from 'lucide-react';
+import { Film } from 'lucide-react';
 import { Header } from './components/Header';
-import { BottomNav } from './components/BottomNav';
 import { TopicStep } from './components/TopicStep';
 import { ScriptStep } from './components/ScriptStep';
 import { VoiceStep } from './components/VoiceStep';

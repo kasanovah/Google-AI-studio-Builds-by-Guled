@@ -1,5 +1,5 @@
 import React from 'react';
-import { Sparkles, Video, Settings as SettingsIcon, FolderGit2, LayoutDashboard, PlusCircle, HardDrive } from 'lucide-react';
+import { Sparkles, Settings as SettingsIcon, FolderGit2, LayoutDashboard, PlusCircle, HardDrive } from 'lucide-react';
 import { ActiveMobileTab } from '../types';
 import { GoogleSignInButton } from './GoogleSignInButton';
 

@@ -483,7 +483,6 @@ export async function generateBespokeSceneVisual(params: ResolveVisualParams): P
     caption = '',
     voiceover = '',
     keyMessage = '',
-    visualObjective = '',
     subject = '',
     action = '',
     environment = '',
@@ -516,8 +515,10 @@ export async function generateBespokeSceneVisual(params: ResolveVisualParams): P
   const kickerLine = safeSubject ? `${safeSubject} — ${safeAction}` : safeAction;
   const safeCamera = escapeXml(cameraComposition || 'Dynamic 9:16 Cinematic Angle');
 
-  // Scene-specific focal geometry according to scene sequence
-  let focalGraphic = '';
+  // Scene-specific focal geometry according to scene sequence. Every branch
+  // below unconditionally assigns this before it's read (if/else-if/else is
+  // exhaustive), so no initializer is needed.
+  let focalGraphic: string;
   if (sceneNumber === 1) {
     // Scene 1: Hook / Problem Reticle
     focalGraphic = `
@@ -645,7 +646,7 @@ export async function generateBespokeSceneVisual(params: ResolveVisualParams): P
     return jpgPath;
   } catch (err: any) {
     console.error(`[VideoProvider] Failed to render bespoke scene visual for Scene ${sceneNumber}:`, err?.message);
-    throw new Error(`Scene ${sceneNumber} visual generation failed: ${err?.message}`);
+    throw new Error(`Scene ${sceneNumber} visual generation failed: ${err?.message}`, { cause: err });
   }
 }
 
@@ -730,7 +731,8 @@ export async function resolveSceneVisual(params: ResolveVisualParams): Promise<V
   } catch (genErr: any) {
     console.error(`[VideoProvider] Failed to generate visual for Scene ${params.sceneNumber}:`, genErr?.message);
     throw new Error(
-      `Visual asset generation failed for Scene ${params.sceneNumber}: ${genErr?.message || 'Unable to generate scene visual'}`
+      `Visual asset generation failed for Scene ${params.sceneNumber}: ${genErr?.message || 'Unable to generate scene visual'}`,
+      { cause: genErr }
     );
   }
 }

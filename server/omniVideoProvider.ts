@@ -26,7 +26,7 @@ interface CaptionLayout {
  */
 function computeCaptionLayout(
   caption: string,
-  frameWidth = 1080,
+  _frameWidth = 1080,
   frameHeight = 1920
 ): CaptionLayout {
   const cleanCaption = (caption || '').replace(/\r?\n/g, ' ').trim();

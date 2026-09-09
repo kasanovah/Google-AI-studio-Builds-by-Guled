@@ -38,7 +38,6 @@ provider.setCustomParameters({
 
 // In-memory token cache (NEVER stored in localStorage / sessionStorage)
 let cachedAccessToken: string | null = null;
-let isSigningIn = false;
 
 // Subscribed listeners
 type AuthStateCallback = (user: User | null, token: string | null) => void;
@@ -89,7 +88,6 @@ export const initAuth = (
 
 export const googleSignIn = async (): Promise<{ user: User; accessToken: string }> => {
   try {
-    isSigningIn = true;
     const result = await signInWithPopup(auth, provider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.accessToken) {
@@ -102,8 +100,6 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
   } catch (error: any) {
     console.error('[GoogleAuth] Sign in error:', error);
     throw error;
-  } finally {
-    isSigningIn = false;
   }
 };
 
