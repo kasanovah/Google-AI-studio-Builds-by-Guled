@@ -1,7 +1,7 @@
-import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { GoogleGenAI } from '@google/genai';
+import { execAsync } from './execAsync.js';
 
 export interface VisualAssetResult {
   assetPath: string;
@@ -634,9 +634,8 @@ export async function generateBespokeSceneVisual(params: ResolveVisualParams): P
 
   try {
     // Render 1080x1920 JPG using FFmpeg librsvg in milliseconds
-    execSync(
-      `ffmpeg -y -i "${svgPath}" -vf "scale=1080:1920" -q:v 2 "${jpgPath}"`,
-      { stdio: 'pipe' }
+    await execAsync(
+      `ffmpeg -y -i "${svgPath}" -vf "scale=1080:1920" -q:v 2 "${jpgPath}"`
     );
 
     if (!fs.existsSync(jpgPath) || fs.statSync(jpgPath).size < 1000) {

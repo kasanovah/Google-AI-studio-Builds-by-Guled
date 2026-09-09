@@ -1,7 +1,7 @@
-import { execSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { execAsync } from './execAsync.js';
 import { renderSceneVideo } from './omniVideoProvider.js';
 import { resolveSceneVisual } from './videoProvider.js';
 import { synthesizeSomaliVoice } from './voiceProvider.js';
@@ -116,9 +116,8 @@ export async function validateMp4File(filePath: string): Promise<{
     throw new Error(`Invalid MP4 signature, expected 'ftyp', got '${boxType}'`);
   }
 
-  const probeJson = execSync(
-    `ffprobe -v error -show_entries format=duration,size,format_name -show_streams -of json "${filePath}"`,
-    { encoding: 'utf8' }
+  const { stdout: probeJson } = await execAsync(
+    `ffprobe -v error -show_entries format=duration,size,format_name -show_streams -of json "${filePath}"`
   );
   const data = JSON.parse(probeJson);
 
@@ -327,18 +326,17 @@ export async function assembleReelMp4(params: AssembleReelParams): Promise<Assem
       const rawConcatAudio = path.join(tempDir, 'concat_audio.aac');
 
       // Concat videos
-      execSync(`ffmpeg -y -f concat -safe 0 -i "${concatListPath}" -c copy "${rawConcatVideo}"`, { stdio: 'pipe' });
+      await execAsync(`ffmpeg -y -f concat -safe 0 -i "${concatListPath}" -c copy "${rawConcatVideo}"`);
 
       // Concat audios
-      execSync(`ffmpeg -y -f concat -safe 0 -i "${audioConcatListPath}" -c copy "${rawConcatAudio}"`, { stdio: 'pipe' });
+      await execAsync(`ffmpeg -y -f concat -safe 0 -i "${audioConcatListPath}" -c copy "${rawConcatAudio}"`);
 
       // =======================================================================
       // Step 5: Final muxing into 1080x1920 MP4
       // =======================================================================
       console.log(`[VideoAssembler] Muxing final production MP4 to ${finalMp4Path}...`);
-      execSync(
-        `ffmpeg -y -i "${rawConcatVideo}" -i "${rawConcatAudio}" -filter_complex "[1:a]apad=whole_dur=${totalReelDuration},loudnorm=I=-16:TP=-1.5:LRA=11[aout]" -map 0:v:0 -map "[aout]" -c:v libx264 -preset ultrafast -pix_fmt yuv420p -r 25 -c:a aac -b:a 192k -ar 44100 -ac 2 -t ${totalReelDuration} -movflags +faststart "${finalMp4Path}"`,
-        { stdio: 'pipe' }
+      await execAsync(
+        `ffmpeg -y -i "${rawConcatVideo}" -i "${rawConcatAudio}" -filter_complex "[1:a]apad=whole_dur=${totalReelDuration},loudnorm=I=-16:TP=-1.5:LRA=11[aout]" -map 0:v:0 -map "[aout]" -c:v libx264 -preset ultrafast -pix_fmt yuv420p -r 25 -c:a aac -b:a 192k -ar 44100 -ac 2 -t ${totalReelDuration} -movflags +faststart "${finalMp4Path}"`
       );
 
       // =======================================================================

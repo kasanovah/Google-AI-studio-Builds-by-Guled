@@ -1,6 +1,6 @@
-import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { execAsync } from './execAsync.js';
 
 export interface SceneRenderResult {
   videoPath: string;
@@ -174,7 +174,7 @@ export async function renderSceneVideo(params: {
       // Flow MP4 Video Clip processing: scale & center crop to 9:16 vertical (1080x1920)
       const videoFilters = `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},setsar=1,${topBrandFilter},${captionFilter}`;
       const cmd = `ffmpeg -y -stream_loop -1 -i "${assetPath}" -vf "${videoFilters}" -c:v libx264 -preset ultrafast -pix_fmt yuv420p -r ${fps} -an -t ${duration} "${rawVideoPath}"`;
-      execSync(cmd, { stdio: 'pipe' });
+      await execAsync(cmd);
     } else {
       // Image processing with subtle dynamic motion
       const totalFrames = Math.max(25, Math.round(duration * fps));
@@ -184,20 +184,18 @@ export async function renderSceneVideo(params: {
 
       const videoFilter = `${zoomDirection},${topBrandFilter},${captionFilter}`;
       const cmd = `ffmpeg -y -i "${assetPath}" -vf "${videoFilter}" -c:v libx264 -preset ultrafast -pix_fmt yuv420p -r ${fps} -t ${duration} "${rawVideoPath}"`;
-      execSync(cmd, { stdio: 'pipe' });
+      await execAsync(cmd);
     }
   } catch (err: any) {
     console.warn('[OmniVideo] Complex filter failed, attempting fallback simple scale:', err?.message);
     const simpleFilter = `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height}`;
     if (assetType === 'video') {
-      execSync(
-        `ffmpeg -y -stream_loop -1 -i "${assetPath}" -vf "${simpleFilter}" -c:v libx264 -preset ultrafast -pix_fmt yuv420p -r ${fps} -an -t ${duration} "${rawVideoPath}"`,
-        { stdio: 'pipe' }
+      await execAsync(
+        `ffmpeg -y -stream_loop -1 -i "${assetPath}" -vf "${simpleFilter}" -c:v libx264 -preset ultrafast -pix_fmt yuv420p -r ${fps} -an -t ${duration} "${rawVideoPath}"`
       );
     } else {
-      execSync(
-        `ffmpeg -y -loop 1 -i "${assetPath}" -vf "${simpleFilter}" -c:v libx264 -preset ultrafast -pix_fmt yuv420p -r ${fps} -t ${duration} "${rawVideoPath}"`,
-        { stdio: 'pipe' }
+      await execAsync(
+        `ffmpeg -y -loop 1 -i "${assetPath}" -vf "${simpleFilter}" -c:v libx264 -preset ultrafast -pix_fmt yuv420p -r ${fps} -t ${duration} "${rawVideoPath}"`
       );
     }
   }

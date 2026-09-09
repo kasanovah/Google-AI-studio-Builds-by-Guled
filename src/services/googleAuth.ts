@@ -111,6 +111,21 @@ export const getAccessToken = async (): Promise<string | null> => {
   return cachedAccessToken;
 };
 
+// Firebase ID token identifying the signed-in user to our own backend (this
+// is distinct from the Google OAuth access token above, which is only used
+// for Drive API calls). The backend verifies this token before running any
+// AI generation, ffmpeg render, or file upload.
+export const getIdToken = async (forceRefresh = false): Promise<string | null> => {
+  const user = auth.currentUser;
+  if (!user) return null;
+  try {
+    return await user.getIdToken(forceRefresh);
+  } catch (err) {
+    console.error('[GoogleAuth] Failed to get ID token:', err);
+    return null;
+  }
+};
+
 export const getCurrentUser = (): User | null => {
   return auth.currentUser;
 };

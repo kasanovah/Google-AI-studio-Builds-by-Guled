@@ -2,8 +2,9 @@
 import express, { Request, Response, NextFunction } from 'express';
 import fs from 'fs';
 import path from 'path';
+import { requireFirebaseAuth } from './server/authMiddleware.js';
 import { generateSomaliScript } from './server/scriptGenerator.js';
-import { assembleReelMp4, validateMp4File } from './server/videoAssembler.js';
+import { assembleReelMp4, AssembleReelResult, validateMp4File } from './server/videoAssembler.js';
 
 const app = express();
 const PORT = 3000;
@@ -31,7 +32,11 @@ setInterval(() => {
 
 function rateLimit(options: { windowMs: number; max: number }) {
   return (req: Request, res: Response, next: NextFunction) => {
-    const key = req.ip || 'unknown';
+    // Key by the authenticated user when available (set by requireFirebaseAuth,
+    // which always runs first on these routes) rather than IP, so a shared IP
+    // doesn't throttle multiple different signed-in users and a single user
+    // can't dodge the limit by switching networks.
+    const key = req.user?.uid || req.ip || 'unknown';
     const now = Date.now();
     const bucket = rateLimitBuckets.get(key);
     if (!bucket || now > bucket.resetAt) {
@@ -68,7 +73,7 @@ app.get('/api/health', (_req: Request, res: Response) => {
 });
 
 // Script generation endpoint (offline / deterministic, no Gemini)
-app.post('/api/generate-script', rateLimit({ windowMs: 10 * 60 * 1000, max: 20 }), async (req: Request, res: Response) => {
+app.post('/api/generate-script', requireFirebaseAuth(), rateLimit({ windowMs: 10 * 60 * 1000, max: 20 }), async (req: Request, res: Response) => {
   try {
     const { topic, description, targetDuration, pacing, tone, customScript } = req.body;
     if (!topic && !description && !customScript) {
@@ -103,7 +108,7 @@ const UPLOAD_MIME_EXTENSIONS: Record<string, string> = {
 };
 const MAX_UPLOAD_ASSET_BYTES = 40 * 1024 * 1024; // 40MB decoded
 
-app.post('/api/upload-asset', rateLimit({ windowMs: 10 * 60 * 1000, max: 30 }), async (req: Request, res: Response) => {
+app.post('/api/upload-asset', requireFirebaseAuth(), rateLimit({ windowMs: 10 * 60 * 1000, max: 30 }), async (req: Request, res: Response) => {
   try {
     const { data } = req.body;
     if (!data || typeof data !== 'string') {
@@ -149,18 +154,68 @@ app.post('/api/upload-asset', rateLimit({ windowMs: 10 * 60 * 1000, max: 30 }), 
   }
 });
 
-// Reel Assembly endpoint
-app.post('/api/assemble-reel', rateLimit({ windowMs: 10 * 60 * 1000, max: 6 }), async (req: Request, res: Response) => {
-  try {
-    const result = await assembleReelMp4(req.body);
-    res.json(result);
-  } catch (err: any) {
-    console.error('Error assembling reel:', err);
-    res.status(500).json({
-      success: false,
-      error: err?.message || 'Failed to assemble Reel MP4',
-    });
+// Reel Assembly: runs as a background job rather than one long HTTP request.
+// assembleReelMp4() drives several minutes of ffmpeg/TTS work; even now that
+// those calls are non-blocking (execAsync instead of execSync), the render
+// itself is still slow, so the client starts a job here and polls
+// GET /api/assemble-reel/:jobId for its status instead of holding one
+// request open for the whole duration.
+interface AssembleJob {
+  status: 'queued' | 'running' | 'done' | 'error';
+  result?: AssembleReelResult;
+  error?: string;
+  ownerUid: string;
+  updatedAt: number;
+}
+const assembleJobs = new Map<string, AssembleJob>();
+
+// Sweep finished jobs after 30 minutes so this map doesn't grow unbounded.
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, job] of assembleJobs) {
+    if (job.status !== 'queued' && job.status !== 'running' && now - job.updatedAt > 30 * 60 * 1000) {
+      assembleJobs.delete(id);
+    }
   }
+}, 10 * 60 * 1000).unref();
+
+app.post('/api/assemble-reel', requireFirebaseAuth(), rateLimit({ windowMs: 10 * 60 * 1000, max: 6 }), (req: Request, res: Response) => {
+  const jobId = `job_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+  const job: AssembleJob = { status: 'queued', ownerUid: req.user!.uid, updatedAt: Date.now() };
+  assembleJobs.set(jobId, job);
+
+  // Fire-and-forget: intentionally not awaited, so this request returns
+  // immediately and the render proceeds in the background.
+  (async () => {
+    job.status = 'running';
+    job.updatedAt = Date.now();
+    try {
+      job.result = await assembleReelMp4(req.body);
+      job.status = 'done';
+    } catch (err: any) {
+      console.error('[AssembleJob] Failed:', err?.message);
+      job.status = 'error';
+      job.error = err?.message || 'Failed to assemble Reel MP4';
+    } finally {
+      job.updatedAt = Date.now();
+    }
+  })();
+
+  res.status(202).json({ success: true, jobId, status: 'queued' });
+});
+
+app.get('/api/assemble-reel/:jobId', requireFirebaseAuth(), (req: Request, res: Response) => {
+  const job = assembleJobs.get(req.params.jobId);
+  if (!job || job.ownerUid !== req.user!.uid) {
+    return res.status(404).json({ error: 'Job not found (it may have expired).' });
+  }
+  if (job.status === 'done') {
+    return res.json({ ...job.result, success: true, status: 'done' });
+  }
+  if (job.status === 'error') {
+    return res.status(500).json({ success: false, status: 'error', error: job.error });
+  }
+  res.json({ success: true, status: job.status });
 });
 
 // Hardened MP4 download and streaming endpoint
