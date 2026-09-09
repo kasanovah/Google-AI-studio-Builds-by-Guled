@@ -1,7 +1,7 @@
 import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { GoogleGenAI, Modality } from '@google/genai';
+import { GoogleGenAI } from '@google/genai';
 
 export interface VisualAssetResult {
   assetPath: string;
@@ -156,19 +156,14 @@ function escapeXml(str: string): string {
 
 /**
  * Generates a real AI image for a scene using its visualPrompt/flowPrompt
- * (already written by the script generator as a still-image-generator prompt).
+ * (written by the script generator as a still-image-generator prompt).
  *
- * Uses `generateContent` with `responseModalities: [IMAGE]` on an
- * image-capable Gemini model — NOT the Imagen-specific `generateImages`
- * method, which only works on Vertex AI / Gemini Enterprise credentials and
- * throws immediately for a plain Gemini Developer API key (the kind AI
- * Studio hands out). `generateContent` is the same call already used for
- * script generation, so it works with that same GEMINI_API_KEY.
+ * Uses `generateContent` on image-capable Gemini models (such as
+ * `gemini-3.1-flash-lite-image` or `gemini-3.1-flash-image`), extracting
+ * the inline image data from the response candidates.
  *
- * Tries a short list of image-capable model candidates in order, since exact
- * model availability/naming shifts over time — falls through to the next
- * candidate on any error, and throws only after every candidate has failed,
- * so the caller can fall back to the offline bespoke SVG visual.
+ * Falls through to the next candidate on any error, and throws only if every candidate
+ * fails, allowing the caller to fall back to the offline bespoke SVG visual.
  */
 export async function generateAIImageVisual(params: ResolveVisualParams): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -192,7 +187,7 @@ export async function generateAIImageVisual(params: ResolveVisualParams): Promis
     throw new Error(`Scene ${sceneNumber}: No visual prompt available for AI image generation`);
   }
 
-  const fullPrompt = `Generate a single still image. ${promptText}. Vertical 9:16 portrait aspect ratio, premium cinematic editorial photography, sharp focus, no on-image text, no captions, no watermark.`;
+  const fullPrompt = `${promptText}. Vertical 9:16 portrait aspect ratio, premium cinematic editorial photography, sharp focus, no on-image text, no captions, no watermark.`;
 
   if (!fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir, { recursive: true });
@@ -209,11 +204,19 @@ export async function generateAIImageVisual(params: ResolveVisualParams): Promis
   });
 
   const envModel = process.env.GEMINI_IMAGE_MODEL?.trim();
+  const isDeprecated = envModel && (
+    envModel.includes('2.5') ||
+    envModel.includes('2.0') ||
+    envModel.includes('1.5')
+  );
+
+  // Preferred image models: nano banana series models
   const candidateModels: string[] = [
-    envModel,
+    envModel && !isDeprecated ? envModel : 'gemini-3.1-flash-lite-image',
+    'gemini-3.1-flash-lite-image',
+    'gemini-3.1-flash-image',
     'gemini-3-pro-image-preview',
-    'gemini-2.5-flash-image',
-    'gemini-2.5-flash-image-preview',
+    'gemini-3-pro-image',
   ].filter((m, idx, arr): m is string => !!m && arr.indexOf(m) === idx);
 
   let lastError: any = null;
@@ -222,31 +225,45 @@ export async function generateAIImageVisual(params: ResolveVisualParams): Promis
     try {
       const response = await ai.models.generateContent({
         model,
-        contents: fullPrompt,
+        contents: {
+          parts: [{ text: fullPrompt }],
+        },
         config: {
-          responseModalities: [Modality.IMAGE],
+          imageConfig: {
+            aspectRatio: '9:16',
+          },
         },
       });
 
-      const parts = response.candidates?.[0]?.content?.parts || [];
-      const imagePart = parts.find((p) => !!p.inlineData?.data);
-      const imageBytes = imagePart?.inlineData?.data;
+      const candidates = response.candidates || [];
+      let imageBytes: string | undefined;
+
+      for (const candidate of candidates) {
+        const parts = candidate.content?.parts || [];
+        for (const part of parts) {
+          if (part.inlineData?.data) {
+            imageBytes = part.inlineData.data;
+            break;
+          }
+        }
+        if (imageBytes) break;
+      }
 
       if (!imageBytes) {
-        throw new Error(`Model ${model} returned no image data`);
+        throw new Error(`Model ${model} returned no image bytes in candidates`);
       }
 
       fs.writeFileSync(jpgPath, Buffer.from(imageBytes, 'base64'));
 
       if (!fs.existsSync(jpgPath) || fs.statSync(jpgPath).size < 1000) {
-        throw new Error(`AI image for Scene ${sceneNumber} was written but looks invalid`);
+        throw new Error(`AI image for Scene ${sceneNumber} was written but appears invalid`);
       }
 
-      console.log(`[VideoProvider] Generated AI image for Scene ${sceneNumber} using ${model}`);
+      console.log(`[VideoProvider] Generated AI image for Scene ${sceneNumber} using model: ${model}`);
       return jpgPath;
     } catch (err: any) {
       lastError = err;
-      console.warn(`[VideoProvider] AI image generation with ${model} failed for Scene ${sceneNumber}: ${err?.message}`);
+      console.warn(`[VideoProvider] AI image generation with ${model} failed for Scene ${sceneNumber}: ${err?.message || err}`);
     }
   }
 
