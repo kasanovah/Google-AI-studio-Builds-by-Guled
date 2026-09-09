@@ -1,7 +1,7 @@
-import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { GoogleGenAI } from '@google/genai';
+import { execAsync } from './execAsync.js';
 
 export interface VisualAssetResult {
   assetPath: string;
@@ -483,7 +483,6 @@ export async function generateBespokeSceneVisual(params: ResolveVisualParams): P
     caption = '',
     voiceover = '',
     keyMessage = '',
-    visualObjective = '',
     subject = '',
     action = '',
     environment = '',
@@ -516,8 +515,10 @@ export async function generateBespokeSceneVisual(params: ResolveVisualParams): P
   const kickerLine = safeSubject ? `${safeSubject} — ${safeAction}` : safeAction;
   const safeCamera = escapeXml(cameraComposition || 'Dynamic 9:16 Cinematic Angle');
 
-  // Scene-specific focal geometry according to scene sequence
-  let focalGraphic = '';
+  // Scene-specific focal geometry according to scene sequence. Every branch
+  // below unconditionally assigns this before it's read (if/else-if/else is
+  // exhaustive), so no initializer is needed.
+  let focalGraphic: string;
   if (sceneNumber === 1) {
     // Scene 1: Hook / Problem Reticle
     focalGraphic = `
@@ -634,9 +635,8 @@ export async function generateBespokeSceneVisual(params: ResolveVisualParams): P
 
   try {
     // Render 1080x1920 JPG using FFmpeg librsvg in milliseconds
-    execSync(
-      `ffmpeg -y -i "${svgPath}" -vf "scale=1080:1920" -q:v 2 "${jpgPath}"`,
-      { stdio: 'pipe' }
+    await execAsync(
+      `ffmpeg -y -i "${svgPath}" -vf "scale=1080:1920" -q:v 2 "${jpgPath}"`
     );
 
     if (!fs.existsSync(jpgPath) || fs.statSync(jpgPath).size < 1000) {
@@ -646,7 +646,7 @@ export async function generateBespokeSceneVisual(params: ResolveVisualParams): P
     return jpgPath;
   } catch (err: any) {
     console.error(`[VideoProvider] Failed to render bespoke scene visual for Scene ${sceneNumber}:`, err?.message);
-    throw new Error(`Scene ${sceneNumber} visual generation failed: ${err?.message}`);
+    throw new Error(`Scene ${sceneNumber} visual generation failed: ${err?.message}`, { cause: err });
   }
 }
 
@@ -664,13 +664,16 @@ export async function generateBespokeSceneVisual(params: ResolveVisualParams): P
 export async function resolveSceneVisual(params: ResolveVisualParams): Promise<VisualAssetResult> {
   const publicDir = path.join(process.cwd(), 'public');
 
-  // Case 1: Custom user-uploaded file (e.g. /uploads/flow_video.mp4 or /uploads/image.png)
+  // Case 1: Custom user-uploaded file (e.g. /uploads/flow_video.mp4 or /uploads/image.png).
+  // Only the basename is trusted from the client-supplied URL — it is joined
+  // directly onto the uploads directory so a "../" in the requested URL can
+  // never resolve to a path outside it (path traversal / arbitrary file read).
   const requestedUrl = params.visualUrl || params.videoUrl;
-  if (requestedUrl && (requestedUrl.includes('/uploads/') || requestedUrl.startsWith('data:'))) {
-    const cleanUrl = requestedUrl.replace(/^\//, '');
-    const candidatePath = path.join(publicDir, cleanUrl);
+  if (requestedUrl && requestedUrl.startsWith('/uploads/')) {
+    const safeName = path.basename(requestedUrl);
+    const candidatePath = safeName ? path.join(publicDir, 'uploads', safeName) : '';
 
-    if (fs.existsSync(candidatePath)) {
+    if (candidatePath && fs.existsSync(candidatePath)) {
       const ext = path.extname(candidatePath).toLowerCase();
       const isVideo = ['.mp4', '.webm', '.mov', '.mkv'].includes(ext);
       return {
@@ -728,7 +731,8 @@ export async function resolveSceneVisual(params: ResolveVisualParams): Promise<V
   } catch (genErr: any) {
     console.error(`[VideoProvider] Failed to generate visual for Scene ${params.sceneNumber}:`, genErr?.message);
     throw new Error(
-      `Visual asset generation failed for Scene ${params.sceneNumber}: ${genErr?.message || 'Unable to generate scene visual'}`
+      `Visual asset generation failed for Scene ${params.sceneNumber}: ${genErr?.message || 'Unable to generate scene visual'}`,
+      { cause: genErr }
     );
   }
 }

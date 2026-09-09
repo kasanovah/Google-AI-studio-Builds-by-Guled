@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronLeft, Settings as SettingsIcon, Film, Sparkles } from 'lucide-react';
+import { ChevronLeft, Settings as SettingsIcon, Film } from 'lucide-react';
 import { ActiveMobileTab, MobileWorkflowStep } from '../../types';
 
 interface MobileHeaderProps {

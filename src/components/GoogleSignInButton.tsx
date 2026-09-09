@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { User } from 'firebase/auth';
-import { LogOut, CheckCircle2, HardDrive, Loader2 } from 'lucide-react';
+import { LogOut, CheckCircle2, Loader2 } from 'lucide-react';
 import { subscribeAuth, googleSignIn, logoutGoogle } from '../services/googleAuth';
 
 interface GoogleSignInButtonProps {

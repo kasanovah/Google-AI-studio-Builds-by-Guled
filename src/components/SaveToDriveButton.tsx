@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { HardDrive, CheckCircle2, AlertCircle, Loader2, ExternalLink } from 'lucide-react';
-import { subscribeAuth, googleSignIn } from '../services/googleAuth';
 import { getOrCreateXeeroFolder, uploadVideoToDrive, GoogleDriveFile } from '../services/googleDrive';
 
 interface SaveToDriveButtonProps {
@@ -36,7 +35,7 @@ export const SaveToDriveButton: React.FC<SaveToDriveButtonProps> = ({
           const res = await authModule.googleSignIn();
           return res.accessToken;
         } catch (e: any) {
-          throw new Error('Please authorize Google Drive access to save your Reel.');
+          throw new Error('Please authorize Google Drive access to save your Reel.', { cause: e });
         }
       })();
 

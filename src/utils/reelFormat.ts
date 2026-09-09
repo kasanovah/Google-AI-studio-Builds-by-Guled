@@ -19,7 +19,7 @@ export function formatReelTitle(filename: string): string {
   name = name.replace(/^XEERO(_AI)?_REEL_/i, '');
   name = name.replace(/_\d+S$/i, ''); // trailing duration suffix like _20S
 
-  const words = name.split(/[_\-]+/).filter(Boolean);
+  const words = name.split(/[_-]+/).filter(Boolean);
   if (words.length === 0) return filename;
 
   return words

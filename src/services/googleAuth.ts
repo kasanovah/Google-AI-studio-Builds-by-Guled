@@ -13,21 +13,18 @@ import firebaseConfig from '../../firebase-applet-config.json';
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
 
-// All Google Drive scopes configured for the applet
+// Google Drive scope for the applet. Every Drive call this app makes
+// (getOrCreateXeeroFolder, listDriveFiles, uploadVideoToDrive,
+// uploadScriptToDrive, deleteDriveFile) only ever touches the app's own
+// "Xeero AI Reels" folder and the files it creates there, so drive.file —
+// access limited to files/folders the app itself creates or that the user
+// explicitly opens with it — covers 100% of that behavior. The previous
+// scope list additionally requested full read/write access to the user's
+// entire Drive plus a dozen overlapping scopes, none of which this app
+// uses; that's a real privacy/trust cost (and would likely fail Google's
+// OAuth app verification review) for no functional benefit.
 export const GOOGLE_DRIVE_SCOPES = [
-  'https://www.googleapis.com/auth/drive',
-  'https://www.googleapis.com/auth/drive.activity',
-  'https://www.googleapis.com/auth/drive.activity.readonly',
-  'https://www.googleapis.com/auth/drive.appdata',
-  'https://www.googleapis.com/auth/drive.apps.readonly',
   'https://www.googleapis.com/auth/drive.file',
-  'https://www.googleapis.com/auth/drive.install',
-  'https://www.googleapis.com/auth/drive.meet.readonly',
-  'https://www.googleapis.com/auth/drive.metadata',
-  'https://www.googleapis.com/auth/drive.metadata.readonly',
-  'https://www.googleapis.com/auth/drive.photos.readonly',
-  'https://www.googleapis.com/auth/drive.readonly',
-  'https://www.googleapis.com/auth/drive.scripts',
 ];
 
 const provider = new GoogleAuthProvider();
@@ -41,7 +38,6 @@ provider.setCustomParameters({
 
 // In-memory token cache (NEVER stored in localStorage / sessionStorage)
 let cachedAccessToken: string | null = null;
-let isSigningIn = false;
 
 // Subscribed listeners
 type AuthStateCallback = (user: User | null, token: string | null) => void;
@@ -92,7 +88,6 @@ export const initAuth = (
 
 export const googleSignIn = async (): Promise<{ user: User; accessToken: string }> => {
   try {
-    isSigningIn = true;
     const result = await signInWithPopup(auth, provider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.accessToken) {
@@ -105,13 +100,26 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
   } catch (error: any) {
     console.error('[GoogleAuth] Sign in error:', error);
     throw error;
-  } finally {
-    isSigningIn = false;
   }
 };
 
 export const getAccessToken = async (): Promise<string | null> => {
   return cachedAccessToken;
+};
+
+// Firebase ID token identifying the signed-in user to our own backend (this
+// is distinct from the Google OAuth access token above, which is only used
+// for Drive API calls). The backend verifies this token before running any
+// AI generation, ffmpeg render, or file upload.
+export const getIdToken = async (forceRefresh = false): Promise<string | null> => {
+  const user = auth.currentUser;
+  if (!user) return null;
+  try {
+    return await user.getIdToken(forceRefresh);
+  } catch (err) {
+    console.error('[GoogleAuth] Failed to get ID token:', err);
+    return null;
+  }
 };
 
 export const getCurrentUser = (): User | null => {

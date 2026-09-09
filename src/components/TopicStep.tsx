@@ -1,5 +1,5 @@
 import React from 'react';
-import { Sparkles, Clock, Compass, Wand2, FileText } from 'lucide-react';
+import { Clock, Compass, Wand2 } from 'lucide-react';
 import { CURATED_SOMALI_TOPICS } from '../data/defaultProject';
 import { ReelPacing, ReelProject } from '../types';
 

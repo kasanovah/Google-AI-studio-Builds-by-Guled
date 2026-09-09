@@ -45,7 +45,6 @@ export const ReelPreviewPlayer: React.FC<ReelPreviewPlayerProps> = ({
 
   // Strictly require a valid assembledResult URL or project previewUrl — NO OLD REEL FALLBACK
   const videoUrl = assembledResult?.mp4Url || assembledResult?.downloadUrl || project.previewUrl || null;
-  const hasResult = !!assembledResult && assembledResult.success;
 
   // Preload video into in-memory Blob to prevent preview iframe navigation cookie errors
   useEffect(() => {

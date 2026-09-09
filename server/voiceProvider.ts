@@ -1,7 +1,7 @@
-import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
+import { execAsync } from './execAsync.js';
 
 export interface VoiceSynthesisParams {
   text: string;
@@ -27,15 +27,14 @@ export interface VoiceSynthesisResult {
 /**
  * Probes the exact duration of an audio file using ffprobe.
  */
-function probeAudioDuration(filePath: string): number {
+async function probeAudioDuration(filePath: string): Promise<number> {
   try {
-    const probeOutput = execSync(
-      `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${filePath}"`,
-      { encoding: 'utf8' }
-    ).trim();
-    const parsed = parseFloat(probeOutput);
+    const { stdout } = await execAsync(
+      `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${filePath}"`
+    );
+    const parsed = parseFloat(stdout.trim());
     return isNaN(parsed) || parsed <= 0 ? 4.0 : parsed;
-  } catch (err) {
+  } catch {
     return 4.0;
   }
 }
@@ -56,10 +55,8 @@ export async function synthesizeSomaliVoice(params: VoiceSynthesisParams): Promi
     text,
     targetDuration,
     outputDir,
-    voiceId = 'ubax-somali',
     voiceName = 'Ubax',
     audioUrl,
-    sceneIndex = 0,
     sceneNumber = 1,
   } = params;
 
@@ -79,24 +76,30 @@ export async function synthesizeSomaliVoice(params: VoiceSynthesisParams): Promi
   // =========================================================================
   if (audioUrl) {
     let sourceAudioPath = '';
-    if (audioUrl.startsWith('/uploads/') || audioUrl.startsWith('/audio/') || audioUrl.startsWith('/exports/')) {
-      const candidate = path.join(process.cwd(), 'public', audioUrl.replace(/^\//, ''));
-      if (fs.existsSync(candidate)) {
-        sourceAudioPath = candidate;
+    // Only the basename is trusted from the client-supplied URL — it is
+    // joined directly onto the specific allowed directory so a "../" in the
+    // requested URL can never resolve outside it (path traversal / arbitrary
+    // file read). Arbitrary absolute filesystem paths are never accepted.
+    const allowedDirs = ['uploads', 'audio', 'exports'];
+    for (const dir of allowedDirs) {
+      if (audioUrl.startsWith(`/${dir}/`)) {
+        const safeName = path.basename(audioUrl);
+        const candidate = safeName ? path.join(process.cwd(), 'public', dir, safeName) : '';
+        if (candidate && fs.existsSync(candidate)) {
+          sourceAudioPath = candidate;
+        }
+        break;
       }
-    } else if (fs.existsSync(audioUrl)) {
-      sourceAudioPath = audioUrl;
     }
 
     if (sourceAudioPath) {
       try {
         console.log(`[VoiceProvider] Processing attached Somali audio for Scene ${sceneNumber}...`);
-        const realDuration = probeAudioDuration(sourceAudioPath);
+        const realDuration = await probeAudioDuration(sourceAudioPath);
         const durationToUse = targetDuration && targetDuration > 0 ? targetDuration : Math.ceil(realDuration);
 
-        execSync(
-          `ffmpeg -y -i "${sourceAudioPath}" -af "apad=whole_dur=${durationToUse},loudnorm=I=-16:TP=-1.5:LRA=11" -c:a aac -b:a 192k -ar 44100 -ac 2 -t ${durationToUse} "${finalAacPath}"`,
-          { stdio: 'pipe' }
+        await execAsync(
+          `ffmpeg -y -i "${sourceAudioPath}" -af "apad=whole_dur=${durationToUse},loudnorm=I=-16:TP=-1.5:LRA=11" -c:a aac -b:a 192k -ar 44100 -ac 2 -t ${durationToUse} "${finalAacPath}"`
         );
 
         return {
@@ -108,7 +111,7 @@ export async function synthesizeSomaliVoice(params: VoiceSynthesisParams): Promi
         };
       } catch (err: any) {
         console.error(`[VoiceProvider] Failed to process attached audio for scene ${sceneNumber}:`, err?.message);
-        throw new Error(`Attached audio processing failed for Scene ${sceneNumber}: ${err?.message}`);
+        throw new Error(`Attached audio processing failed for Scene ${sceneNumber}: ${err?.message}`, { cause: err });
       }
     }
   }
@@ -148,12 +151,11 @@ export async function synthesizeSomaliVoice(params: VoiceSynthesisParams): Promi
       const rawMp3Path = path.join(outputDir, `raw_eleven_${sceneNumber}.mp3`);
       fs.writeFileSync(rawMp3Path, Buffer.from(buffer));
 
-      const spokenDuration = probeAudioDuration(rawMp3Path);
+      const spokenDuration = await probeAudioDuration(rawMp3Path);
       const safeDuration = targetDuration ? Math.max(targetDuration, Math.ceil(spokenDuration)) : Math.ceil(spokenDuration);
 
-      execSync(
-        `ffmpeg -y -i "${rawMp3Path}" -af "apad=whole_dur=${safeDuration},loudnorm=I=-16:TP=-1.5:LRA=11" -c:a aac -b:a 192k -ar 44100 -ac 2 -t ${safeDuration} "${finalAacPath}"`,
-        { stdio: 'pipe' }
+      await execAsync(
+        `ffmpeg -y -i "${rawMp3Path}" -af "apad=whole_dur=${safeDuration},loudnorm=I=-16:TP=-1.5:LRA=11" -c:a aac -b:a 192k -ar 44100 -ac 2 -t ${safeDuration} "${finalAacPath}"`
       );
 
       return {
@@ -184,15 +186,14 @@ export async function synthesizeSomaliVoice(params: VoiceSynthesisParams): Promi
       throw new Error(`Edge TTS did not create audio file for Scene ${sceneNumber}`);
     }
 
-    const spokenDuration = probeAudioDuration(rawGeneratedMp3);
+    const spokenDuration = await probeAudioDuration(rawGeneratedMp3);
     const finalDuration = targetDuration ? Math.max(targetDuration, Math.ceil(spokenDuration)) : Math.max(Math.ceil(spokenDuration), 3);
 
     console.log(`[VoiceProvider] Scene ${sceneNumber}: Ubax spoken duration is ${spokenDuration.toFixed(2)}s (allocated: ${finalDuration}s)`);
 
     // Normalize audio to standard broadcast loudness (-16 LUFS) and export as AAC
-    execSync(
-      `ffmpeg -y -i "${rawGeneratedMp3}" -af "apad=whole_dur=${finalDuration},loudnorm=I=-16:TP=-1.5:LRA=11" -c:a aac -b:a 192k -ar 44100 -ac 2 -t ${finalDuration} "${finalAacPath}"`,
-      { stdio: 'pipe' }
+    await execAsync(
+      `ffmpeg -y -i "${rawGeneratedMp3}" -af "apad=whole_dur=${finalDuration},loudnorm=I=-16:TP=-1.5:LRA=11" -c:a aac -b:a 192k -ar 44100 -ac 2 -t ${finalDuration} "${finalAacPath}"`
     );
 
     // Clean up temporary raw mp3
@@ -223,12 +224,11 @@ export async function synthesizeSomaliVoice(params: VoiceSynthesisParams): Promi
     const sceneDuration = targetDuration || 5;
 
     // Use libflite speech engine with female voice 'slt' to synthesize text directly
-    execSync(
-      `ffmpeg -y -f lavfi -i "flite=text='${escapedText}':voice=slt" -af "asetrate=16000*1.08,atempo=0.96,apad=whole_dur=${sceneDuration},loudnorm=I=-16:TP=-1.5:LRA=11" -c:a aac -b:a 192k -ar 44100 -ac 2 -t ${sceneDuration} "${finalAacPath}"`,
-      { stdio: 'pipe' }
+    await execAsync(
+      `ffmpeg -y -f lavfi -i "flite=text='${escapedText}':voice=slt" -af "asetrate=16000*1.08,atempo=0.96,apad=whole_dur=${sceneDuration},loudnorm=I=-16:TP=-1.5:LRA=11" -c:a aac -b:a 192k -ar 44100 -ac 2 -t ${sceneDuration} "${finalAacPath}"`
     );
 
-    const actualDuration = probeAudioDuration(finalAacPath);
+    const actualDuration = await probeAudioDuration(finalAacPath);
 
     return {
       audioPath: finalAacPath,
@@ -240,7 +240,8 @@ export async function synthesizeSomaliVoice(params: VoiceSynthesisParams): Promi
   } catch (localErr: any) {
     console.error(`[VoiceProvider] Fatal: Failed to synthesize audio for Scene ${sceneNumber}:`, localErr?.message);
     throw new Error(
-      `Codka muuqaalka ${sceneNumber} waa la waayey (Failed to generate voiceover for Scene ${sceneNumber}): ${localErr?.message}`
+      `Codka muuqaalka ${sceneNumber} waa la waayey (Failed to generate voiceover for Scene ${sceneNumber}): ${localErr?.message}`,
+      { cause: localErr }
     );
   }
 }

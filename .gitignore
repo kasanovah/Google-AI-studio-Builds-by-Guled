@@ -4,3 +4,12 @@ dist/
 .env.local
 *.log
 .DS_Store
+
+# Runtime output directories — server.ts creates these on startup and
+# writes generated reels / uploaded assets into them. Their contents are
+# generated artifacts (rendered MP4s, uploaded clips), not source, and
+# shouldn't be committed.
+public/exports/*
+public/uploads/*
+!public/exports/.gitkeep
+!public/uploads/.gitkeep

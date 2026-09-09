@@ -1,21 +1,20 @@
 import React, { useState } from 'react';
-import { 
-  Layers, 
-  Clock, 
-  Film, 
-  Copy, 
-  Check, 
-  Upload, 
-  Plus, 
-  Trash2, 
-  Sparkles, 
-  AlertCircle, 
-  CheckCircle2, 
-  Play, 
-  Image as ImageIcon,
+import {
+  Layers,
+  Clock,
+  Film,
+  Copy,
+  Check,
+  Upload,
+  Plus,
+  Trash2,
+  Sparkles,
+  AlertCircle,
+  CheckCircle2,
   Mic
 } from 'lucide-react';
 import { ReelProject, Scene } from '../types';
+import { apiFetch } from '../services/apiClient';
 
 interface ScenesStepProps {
   project: ReelProject;
@@ -53,7 +52,7 @@ export const ScenesStep: React.FC<ScenesStepProps> = ({ project, setProject }) =
       reader.readAsDataURL(file);
       const base64Data = await base64Promise;
 
-      const res = await fetch('/api/upload-asset', {
+      const res = await apiFetch('/api/upload-asset', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

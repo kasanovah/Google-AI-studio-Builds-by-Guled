@@ -1,19 +1,17 @@
 import React, { useState } from 'react';
-import { 
-  Mic, 
-  Volume2, 
-  CheckCircle, 
-  Sliders, 
-  Play, 
-  Upload, 
-  CheckCircle2, 
-  Sparkles, 
-  FileAudio, 
-  AlertCircle 
+import {
+  Mic,
+  Volume2,
+  CheckCircle,
+  Sliders,
+  Upload,
+  CheckCircle2,
+  FileAudio,
 } from 'lucide-react';
 import { SOMALI_VOICES } from '../data/defaultProject';
 import { ReelProject, VoiceOption } from '../types';
 import { playSomaliVoicePreview } from '../utils/audioSynthesizer';
+import { apiFetch } from '../services/apiClient';
 
 interface VoiceStepProps {
   project: ReelProject;
@@ -53,7 +51,7 @@ export const VoiceStep: React.FC<VoiceStepProps> = ({ project, setProject }) => 
       reader.readAsDataURL(file);
       const base64Data = await base64Promise;
 
-      const res = await fetch('/api/upload-asset', {
+      const res = await apiFetch('/api/upload-asset', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

@@ -1,15 +1,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
-import { 
-  Sparkles, 
-  Download, 
-  Eye, 
-  PlusCircle, 
-  RotateCw,
-  Film
-} from 'lucide-react';
+import { Film } from 'lucide-react';
 import { Header } from './components/Header';
-import { BottomNav } from './components/BottomNav';
 import { TopicStep } from './components/TopicStep';
 import { ScriptStep } from './components/ScriptStep';
 import { VoiceStep } from './components/VoiceStep';
@@ -22,6 +14,7 @@ import { GoogleDriveView } from './components/GoogleDriveView';
 import { SettingsModal } from './components/SettingsModal';
 import { MobileAppView } from './components/mobile/MobileAppView';
 import { createCleanReel, createCleanReelProject } from './data/defaultProject';
+import { apiFetch } from './services/apiClient';
 import { 
   ActiveMobileTab, 
   AssembledReelResult, 
@@ -90,7 +83,7 @@ export function App() {
         currentMessage: 'CREATING SCRIPT...',
       });
 
-      const res = await fetch('/api/generate-script', {
+      const res = await apiFetch('/api/generate-script', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -242,7 +235,7 @@ export function App() {
         });
       }, 2400);
 
-      const res = await fetch('/api/assemble-reel', {
+      const startRes = await apiFetch('/api/assemble-reel', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -280,13 +273,36 @@ export function App() {
         }),
       });
 
-      if (!res.ok) {
-        throw new Error(`Assembly failed with HTTP ${res.status}`);
+      if (!startRes.ok) {
+        const errData = await startRes.json().catch(() => ({}));
+        throw new Error(errData.error || `Assembly failed with HTTP ${startRes.status}`);
+      }
+      const { jobId } = await startRes.json();
+      if (!jobId) {
+        throw new Error('Server did not return a job id for this render.');
       }
 
-      const result = await res.json();
-      if (!result.success) {
-        throw new Error(result.message || 'Assembly returned unsuccessful');
+      // The backend renders in the background (ffmpeg + TTS can take a
+      // couple of minutes), so poll for completion instead of holding one
+      // HTTP request open for the whole render.
+      const POLL_INTERVAL_MS = 2500;
+      const POLL_TIMEOUT_MS = 8 * 60 * 1000;
+      const pollStartedAt = Date.now();
+      let result: any = null;
+      while (!result) {
+        await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+        const statusRes = await apiFetch(`/api/assemble-reel/${jobId}`);
+        const statusData = await statusRes.json().catch(() => ({}));
+        if (!statusRes.ok || statusData.status === 'error') {
+          throw new Error(statusData.error || 'Reel assembly failed');
+        }
+        if (statusData.status === 'done') {
+          result = statusData;
+          break;
+        }
+        if (Date.now() - pollStartedAt > POLL_TIMEOUT_MS) {
+          throw new Error('Reel assembly timed out. Please try again.');
+        }
       }
 
       setAssembledResult(result);
