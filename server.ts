@@ -7,7 +7,9 @@ import { generateSomaliScript } from './server/scriptGenerator.js';
 import { assembleReelMp4, AssembleReelResult } from './server/videoAssembler.js';
 
 const app = express();
-const PORT = 3000;
+// Hosting platforms like Render assign a port at runtime via the PORT env
+// var and expect the app to bind to it — falls back to 3000 for local dev.
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 // The frontend and this API are always served from the same origin (this
 // same Express app, in both dev and prod), so no cross-origin requests are

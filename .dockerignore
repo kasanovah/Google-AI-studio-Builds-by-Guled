@@ -1,0 +1,10 @@
+node_modules
+dist
+public/exports/*
+public/uploads/*
+!public/exports/.gitkeep
+!public/uploads/.gitkeep
+.git
+.env
+.env.local
+*.log
