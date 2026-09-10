@@ -322,7 +322,13 @@ export const ReelPreviewPlayer: React.FC<ReelPreviewPlayerProps> = ({
               onLoadedMetadata={handleLoadedMetadata}
               onEnded={() => setIsPlaying(false)}
               onClick={togglePlay}
-              className="w-full h-full object-cover cursor-pointer select-none"
+              // object-contain (not object-cover) guarantees the whole
+              // 1080x1920 frame is always visible, never cropped — cover
+              // clips the edges whenever the box's actual rendered aspect
+              // ratio doesn't match 9:16 exactly, which happens reliably in
+              // fullscreen (the browser fits to the device's real screen
+              // ratio, not 9:16) and can crop off edge text/branding.
+              className="w-full h-full object-contain cursor-pointer select-none"
             />
 
             {/* Top Overlay Badges */}
