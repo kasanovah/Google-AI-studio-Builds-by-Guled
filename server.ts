@@ -15,7 +15,7 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 // same Express app, in both dev and prod), so no cross-origin requests are
 // ever legitimate here. A wide-open `Access-Control-Allow-Origin: *` would
 // let any website on the internet call these endpoints — including the
-// ones that invoke paid Gemini/ElevenLabs APIs and spawn ffmpeg — directly
+// ones that invoke paid Gemini APIs and spawn ffmpeg — directly
 // from a visitor's browser. Omitting CORS headers entirely means the
 // browser's default same-origin policy blocks any such cross-site call.
 app.use(express.json({ limit: '50mb' }));

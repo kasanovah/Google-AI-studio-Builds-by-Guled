@@ -46,9 +46,8 @@ async function probeAudioDuration(filePath: string): Promise<number> {
  * 1. TRUE SCENE-LEVEL GENERATION: Each scene's narration text is synthesized individually.
  * 2. NO TIME SLICING: Never slices a pre-recorded master track at arbitrary offsets.
  * 3. UBAX NEURAL VOICE: Uses official Microsoft Edge TTS `so-SO-UbaxNeural` for authentic native Somali speech.
- * 4. ELEVENLABS SUPPORT: Uses ElevenLabs API if ELEVENLABS_API_KEY is configured.
- * 5. USER ATTACHMENTS: Supports custom uploaded audio clips per scene.
- * 6. ACCURATE DURATION: Measures and returns the actual spoken duration of each scene's narration.
+ * 4. USER ATTACHMENTS: Supports custom uploaded audio clips per scene.
+ * 5. ACCURATE DURATION: Measures and returns the actual spoken duration of each scene's narration.
  */
 export async function synthesizeSomaliVoice(params: VoiceSynthesisParams): Promise<VoiceSynthesisResult> {
   const {
@@ -117,65 +116,7 @@ export async function synthesizeSomaliVoice(params: VoiceSynthesisParams): Promi
   }
 
   // =========================================================================
-  // Case 2: ElevenLabs Somali Voice (if configured)
-  // =========================================================================
-  const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY;
-  if (elevenLabsApiKey) {
-    try {
-      console.log(`[VoiceProvider] Synthesizing Scene ${sceneNumber} with ElevenLabs Ubax: "${cleanText.slice(0, 45)}..."`);
-      const targetElevenVoiceId = process.env.UBAX_VOICE_ID || '21m00Tcm4TlvDq8ikWAM';
-      const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${targetElevenVoiceId}`, {
-        method: 'POST',
-        headers: {
-          'Accept': 'audio/mpeg',
-          'Content-Type': 'application/json',
-          'xi-api-key': elevenLabsApiKey,
-        },
-        body: JSON.stringify({
-          text: cleanText,
-          model_id: 'eleven_multilingual_v2',
-          voice_settings: {
-            stability: 0.55,
-            similarity_boost: 0.85,
-            style: 0.35,
-            use_speaker_boost: true,
-          },
-        }),
-        // Bounds the request so a hung connection can't stall the whole
-        // reel; a timeout here falls through to the catch block below and
-        // the caller's own fallback path.
-        signal: AbortSignal.timeout(60_000),
-      });
-
-      if (!response.ok) {
-        throw new Error(`ElevenLabs HTTP ${response.status}: ${(await response.text()).slice(0, 100)}`);
-      }
-
-      const buffer = await response.arrayBuffer();
-      const rawMp3Path = path.join(outputDir, `raw_eleven_${sceneNumber}.mp3`);
-      fs.writeFileSync(rawMp3Path, Buffer.from(buffer));
-
-      const spokenDuration = await probeAudioDuration(rawMp3Path);
-      const safeDuration = targetDuration ? Math.max(targetDuration, Math.ceil(spokenDuration)) : Math.ceil(spokenDuration);
-
-      await execAsync(
-        `ffmpeg -y -i "${rawMp3Path}" -af "apad=whole_dur=${safeDuration},loudnorm=I=-16:TP=-1.5:LRA=11" -c:a aac -b:a 192k -ar 44100 -ac 2 -t ${safeDuration} "${finalAacPath}"`
-      );
-
-      return {
-        audioPath: finalAacPath,
-        duration: safeDuration,
-        sampleRate: 44100,
-        voiceUsed: `Ubax ElevenLabs (${voiceName})`,
-        provider: 'elevenlabs',
-      };
-    } catch (apiErr: any) {
-      console.warn('[VoiceProvider] ElevenLabs failed, proceeding to Microsoft UbaxNeural:', apiErr?.message);
-    }
-  }
-
-  // =========================================================================
-  // Case 3: Microsoft Edge TTS - Native Somali Voice `so-SO-UbaxNeural`
+  // Case 2: Microsoft Edge TTS - Native Somali Voice `so-SO-UbaxNeural`
   // =========================================================================
   try {
     console.log(`[VoiceProvider] Synthesizing Scene ${sceneNumber} with so-SO-UbaxNeural: "${cleanText.slice(0, 50)}..."`);
@@ -219,7 +160,7 @@ export async function synthesizeSomaliVoice(params: VoiceSynthesisParams): Promi
   }
 
   // =========================================================================
-  // Case 4: Authentic FFmpeg Speech Engine for this Scene's EXACT Text
+  // Case 3: Authentic FFmpeg Speech Engine for this Scene's EXACT Text
   // (Guarantees zero audio looping/slicing repetition if external API is unreachable)
   // =========================================================================
   try {

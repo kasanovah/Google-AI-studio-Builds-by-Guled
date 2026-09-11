@@ -3,14 +3,14 @@ import { CaptionStyle, ReelProject, VoiceOption } from '../types';
 export const SOMALI_VOICES: VoiceOption[] = [
   {
     id: 'ubax-somali',
-    name: 'Ubax (Somali Female • ElevenLabs)',
+    name: 'Ubax (Somali Female • Edge Neural)',
     language: 'Somali (Af-Soomaali)',
     accent: 'Hargeisa / Mogadishu Clear',
     gender: 'female',
     sampleText: 'Ku soo dhawoow Xeero AI, baro sida maanta loogu faa’iidaysto garaadka macmalka ah.',
     pitch: 1.0,
     rate: 1.0,
-    provider: 'ubax_elevenlabs',
+    provider: 'edge_tts',
     tag: 'Ubax • Rasmi ah',
   },
   {

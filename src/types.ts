@@ -33,7 +33,7 @@ export interface VoiceOption {
   sampleText: string;
   pitch: number;
   rate: number;
-  provider: 'ubax_elevenlabs' | 'somali_neural_local' | 'custom_upload' | 'edge_tts';
+  provider: 'somali_neural_local' | 'custom_upload' | 'edge_tts';
   tag?: string;
   audioUrl?: string;
 }

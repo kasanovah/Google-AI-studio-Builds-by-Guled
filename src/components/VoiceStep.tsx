@@ -86,7 +86,7 @@ export const VoiceStep: React.FC<VoiceStepProps> = ({ project, setProject }) => 
       <div>
         <h2 className="text-lg sm:text-xl font-bold text-white tracking-tight flex items-center gap-2">
           <Mic className="w-5 h-5 text-sky-400" />
-          <span>3. Codka Af-Soomaaliga (Ubax / ElevenLabs)</span>
+          <span>3. Codka Af-Soomaaliga (Ubax Neural)</span>
         </h2>
         <p className="text-xs sm:text-sm text-slate-400 mt-0.5">
           Codka Soomaaliga ee Ubax ayaa ah doorashada rasmiga ah ee Reel Studio.
@@ -98,7 +98,7 @@ export const VoiceStep: React.FC<VoiceStepProps> = ({ project, setProject }) => 
         <div className="flex items-center gap-2">
           <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
           <span className="text-slate-300 font-medium">Bixiye:</span>
-          <span className="font-bold text-white">ElevenLabs / Ubax Somali AI</span>
+          <span className="font-bold text-white">Ubax Somali AI (Edge Neural)</span>
         </div>
         <div className="flex items-center gap-2">
           <span className="text-slate-400">Luqadda:</span>
@@ -205,7 +205,7 @@ export const VoiceStep: React.FC<VoiceStepProps> = ({ project, setProject }) => 
         </div>
       </div>
 
-      {/* Optional: Upload ElevenLabs Audio File */}
+      {/* Optional: Upload a custom pre-recorded voice file */}
       <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 flex flex-col gap-2.5">
         <div className="flex items-center justify-between">
           <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
@@ -219,7 +219,7 @@ export const VoiceStep: React.FC<VoiceStepProps> = ({ project, setProject }) => 
           )}
         </div>
         <p className="text-[11px] text-slate-400 leading-relaxed">
-          Haddii aad codka Ubax si gaar ah uga soo duubatay ElevenLabs, waxaad toos ugu dari kartaa halkan si loogu lifaaqo muuqaalkaaga.
+          Haddii aad codka Ubax si gaar ah u duubtay, waxaad toos ugu dari kartaa halkan si loogu lifaaqo muuqaalkaaga.
         </p>
 
         <label className="cursor-pointer py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center justify-center gap-2 border border-slate-700 transition-all active:scale-95">
