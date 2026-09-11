@@ -244,7 +244,7 @@ export async function generateAIImageVisual(params: ResolveVisualParams): Promis
     throw new Error(`Scene ${sceneNumber}: No visual prompt available for AI image generation`);
   }
 
-  const fullPrompt = `${promptText}. Vertical 9:16 portrait aspect ratio, premium cinematic editorial photography, sharp focus, no on-image text, no captions, no watermark.`;
+  const fullPrompt = `${promptText}. Vertical 9:16 portrait aspect ratio, premium cinematic editorial photography, sharp focus, realistic proportions. No on-image text, no captions, no watermark, no distorted anatomy, no duplicate or malformed objects.`;
 
   if (!fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir, { recursive: true });
@@ -257,6 +257,11 @@ export async function generateAIImageVisual(params: ResolveVisualParams): Promis
       headers: {
         'User-Agent': 'aistudio-build',
       },
+      // Bounds each model attempt so a hung request can't stall the whole
+      // reel; the loop below still falls through to the next candidate
+      // model, and the caller falls back to the offline bespoke visual if
+      // every candidate fails.
+      timeout: 90_000,
     },
   });
 

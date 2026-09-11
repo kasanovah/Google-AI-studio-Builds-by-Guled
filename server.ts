@@ -273,7 +273,7 @@ app.get('/api/download-reel-mp4', async (req: Request, res: Response) => {
       // start; everything else is a normal `bytes=start-end` (end optional).
       const parts = range.replace(/bytes=/, '').split('-');
       const isSuffix = parts[0] === '';
-      let start = isSuffix ? Math.max(0, stats.size - parseInt(parts[1], 10)) : parseInt(parts[0], 10);
+      const start = isSuffix ? Math.max(0, stats.size - parseInt(parts[1], 10)) : parseInt(parts[0], 10);
       let end = isSuffix || !parts[1] ? stats.size - 1 : parseInt(parts[1], 10);
 
       if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= stats.size) {
@@ -372,7 +372,7 @@ app.get('/exports/:filename', (req: Request, res: Response) => {
     // start; everything else is a normal `bytes=start-end` (end optional).
     const parts = range.replace(/bytes=/, '').split('-');
     const isSuffix = parts[0] === '';
-    let start = isSuffix ? Math.max(0, stats.size - parseInt(parts[1], 10)) : parseInt(parts[0], 10);
+    const start = isSuffix ? Math.max(0, stats.size - parseInt(parts[1], 10)) : parseInt(parts[0], 10);
     let end = isSuffix || !parts[1] ? stats.size - 1 : parseInt(parts[1], 10);
 
     if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= stats.size) {

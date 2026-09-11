@@ -1282,6 +1282,10 @@ export async function generateScenesWithGemini(params: {
       headers: {
         'User-Agent': 'aistudio-build',
       },
+      // A hung request would otherwise block this job indefinitely; bounding
+      // it means a bad model attempt fails fast enough for the next
+      // candidate in the fallback list below to get a real chance.
+      timeout: 60_000,
     },
   });
 
@@ -1311,17 +1315,19 @@ TARGET TOTAL DURATION: ${targetDuration} seconds across exactly 6 scenes (~${Mat
 
 STRICT SOMALI LANGUAGE RULES:
 - Write "voiceover", "caption", "keyMessage", "subject", "action", and "environment" fields in natural, fluent, professional Somali. Never machine-translated or awkward phrasing. No calques.
+- Do not reach for an English word when a natural, commonly understood Somali word exists — translate it. Only keep a term in English when Somali speakers genuinely use that English word in everyday speech and no natural Somali equivalent exists (e.g. "AI", "app", "internet", "email"). When in doubt, prefer the Somali word.
 - Company and product names (e.g. Google, OpenAI, Nvidia) take FEMININE grammatical agreement in Somali (waxay/ay/-tay), never masculine (wuxuu/uu/-ay).
 - Each scene's voiceover should be roughly ${approxWordsPerScene} words — enough to comfortably fill ~${Math.round(targetDuration / sceneCount)} seconds of natural spoken pacing (about 2-3 words per second), not more.
 
 STRUCTURE (exactly 6 scenes, in order):
-1. Hook — state the problem or surprising fact that makes someone stop scrolling.
+1. Hook — state the problem or surprising fact that makes someone stop scrolling in the first 2-3 seconds. Never open with a generic greeting or announcement like "Asc dhammaan", "Maanta waxaan ka hadlaynaa...", or "Ku soo dhawaada..." — lead with the curiosity or value itself, e.g. the style of "AI-kan wuxuu kuu qaban karaa shaqo aad saacado ku qaadan lahayd."
 2-5. Explanation — build the idea step by step with concrete, specific detail (not vague generalities). Each scene must be visually and narratively distinct from the others — no repeated concepts.
 6. Outro/CTA — close with an inspiring one-line takeaway, and set caption to exactly "Ku Xirnow Xeero AI!" (voiceover can vary but should invite the viewer to follow Xeero AI).
 
 VISUAL FIELDS (English):
 - "visualObjective", "cameraComposition", "visualPrompt", "flowPrompt", and "visualKeywords" must be written in English, describing a premium, cinematic, Bloomberg/Reuters-editorial-style 9:16 visual specific to that exact scene's content — never generic stock-photo description.
 - "visualPrompt" is for a still image generator; "flowPrompt" is for a video generator and must start with "Vertical 9:16 cinematic" and end with "24fps".
+- If the same person, product, or setting reasonably recurs across multiple scenes, describe their visual details (appearance, clothing, environment) identically every time they appear, so the Reel reads as one continuous world rather than six unrelated images.
 
 Return ONLY the structured data — no extra commentary.`;
 

@@ -12,7 +12,8 @@ import {
   PlusCircle,
   CheckCircle2,
   ChevronRight,
-  Wand2
+  Wand2,
+  AlertTriangle
 } from 'lucide-react';
 import { 
   AssembledReelResult, 
@@ -222,6 +223,26 @@ export const MobileCreateWorkflow: React.FC<MobileCreateWorkflowProps> = ({
           <CheckCircle2 className="w-4 h-4" />
           <span>✓ REEL READY (1080x1920 • H.264 MP4)</span>
         </div>
+
+        {/* Fallback-visual notice: tell the user plainly when a scene
+            couldn't get a real AI image (e.g. Gemini quota/billing issue)
+            and silently used the offline placeholder graphic instead,
+            rather than letting it pass as if nothing went wrong. */}
+        {(() => {
+          const fallbackScenes = (assembledResult.assembledScenes || []).filter(
+            (s) => s.visualSource === 'bespoke_scene_visual'
+          );
+          if (fallbackScenes.length === 0) return null;
+          return (
+            <div className="w-full max-w-sm flex items-start gap-2 py-2.5 px-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>
+                Sawir AI dhab ah looma soo saarin muuqaal{fallbackScenes.length > 1 ? 'lada' : 'ka'}{' '}
+                {fallbackScenes.map((s) => s.sceneNumber).join(', ')} — waxaa loo isticmaalay sawir beddelaad. Hubi in GEMINI_API_KEY-gaaga lacag/xad haysto.
+              </span>
+            </div>
+          );
+        })()}
 
         {/* Three Mobile Buttons */}
         <div className="w-full max-w-sm flex flex-col gap-2.5">
@@ -764,16 +785,22 @@ export const MobileCreateWorkflow: React.FC<MobileCreateWorkflowProps> = ({
               PREVIEW REEL
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              Daawo muuqaalka 9:16 intaadan u gudbin finalization
+              Hubi muuqaallada ka hor inta aadan bilaabin — video dhabta ah waxaa la sameeyaa marka aad taabato "GENERATE / FINALIZE REEL"
             </p>
           </div>
 
-          {/* DOMINANT 9:16 Video Preview Element */}
+          {/* Scene storyboard — never a real video here: any assembledResult
+              this session belongs to a *previous* render whose file may no
+              longer exist on the server (redeploys and instance recycling
+              both wipe exported files), so treating it as playable at this
+              step risks showing a broken player. The real video only exists
+              once Generate below has actually run. */}
           <div className="w-full flex flex-col items-center">
             <ReelPreviewPlayer
-              assembledResult={assembledResult}
+              assembledResult={null}
               project={project}
               isGenerating={false}
+              onGenerateClick={handleTriggerGenerate}
             />
           </div>
 

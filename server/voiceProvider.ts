@@ -141,6 +141,10 @@ export async function synthesizeSomaliVoice(params: VoiceSynthesisParams): Promi
             use_speaker_boost: true,
           },
         }),
+        // Bounds the request so a hung connection can't stall the whole
+        // reel; a timeout here falls through to the catch block below and
+        // the caller's own fallback path.
+        signal: AbortSignal.timeout(60_000),
       });
 
       if (!response.ok) {
