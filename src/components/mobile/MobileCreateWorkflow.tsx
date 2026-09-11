@@ -889,6 +889,7 @@ export const MobileCreateWorkflow: React.FC<MobileCreateWorkflowProps> = ({
               project={project}
               isGenerating={false}
               onGenerateClick={handleTriggerGenerate}
+              storyboardOnly
             />
           </div>
 

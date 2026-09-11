@@ -22,6 +22,14 @@ interface ReelPreviewPlayerProps {
   project: ReelProject;
   isGenerating?: boolean;
   onGenerateClick?: () => void;
+  /**
+   * Forces the storyboard placeholder even when the project still carries a
+   * previewUrl. The pre-generate Preview step needs this: that URL belongs to
+   * an earlier render whose file may be gone from the server's ephemeral
+   * disk, and showing it produces a dead player plus a Download button that
+   * can only fail.
+   */
+  storyboardOnly?: boolean;
 }
 
 export const ReelPreviewPlayer: React.FC<ReelPreviewPlayerProps> = ({
@@ -29,6 +37,7 @@ export const ReelPreviewPlayer: React.FC<ReelPreviewPlayerProps> = ({
   project,
   isGenerating,
   onGenerateClick,
+  storyboardOnly = false,
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -44,7 +53,9 @@ export const ReelPreviewPlayer: React.FC<ReelPreviewPlayerProps> = ({
   const [downloadError, setDownloadError] = useState<string | null>(null);
 
   // Strictly require a valid assembledResult URL or project previewUrl — NO OLD REEL FALLBACK
-  const videoUrl = assembledResult?.mp4Url || assembledResult?.downloadUrl || project.previewUrl || null;
+  const videoUrl = storyboardOnly
+    ? null
+    : assembledResult?.mp4Url || assembledResult?.downloadUrl || project.previewUrl || null;
 
   // The <video> element streams directly from videoUrl (/exports/:filename,
   // which supports Range requests + chunked transfer-encoding) rather than
