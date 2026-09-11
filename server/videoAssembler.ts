@@ -143,6 +143,13 @@ export async function validateMp4File(filePath: string): Promise<{
 
 const inFlightAssemblies = new Map<string, Promise<AssembleReelResult>>();
 
+// Scenes dissolve into each other instead of cutting hard. Every non-final
+// scene is rendered this many seconds longer than its spoken duration so
+// that extra footage exists to blend away during the crossfade — the
+// narration/caption timing (recordedSceneDurations) is unaffected, so audio
+// stays in sync with the final, crossfaded video.
+const CROSSFADE_DURATION = 0.4;
+
 export async function assembleReelMp4(params: AssembleReelParams): Promise<AssembleReelResult> {
   const scenes = params.scenes || [];
   if (scenes.length === 0) {
@@ -282,11 +289,13 @@ export async function assembleReelMp4(params: AssembleReelParams): Promise<Assem
         // =====================================================================
         // Step 3: Render 1080x1920 scene video for exact sceneDuration
         // =====================================================================
-        console.log(`[VideoAssembler] Step 3/3: Rendering Scene ${sceneNumber} video (${sceneDuration}s)...`);
+        const isLastScene = i === scenes.length - 1;
+        const renderDuration = isLastScene ? sceneDuration : sceneDuration + CROSSFADE_DURATION;
+        console.log(`[VideoAssembler] Step 3/3: Rendering Scene ${sceneNumber} video (${renderDuration}s)...`);
         const videoResult = await renderSceneVideo({
           assetPath: visual.assetPath,
           assetType: visual.type,
-          duration: sceneDuration,
+          duration: renderDuration,
           captionText: scene.caption || scene.voiceover || '',
           outputDir: sceneDir,
           sceneIndex: i,
@@ -312,12 +321,8 @@ export async function assembleReelMp4(params: AssembleReelParams): Promise<Assem
       const totalReelDuration = recordedSceneDurations.reduce((a, b) => a + b, 0);
       console.log(`[VideoAssembler] Concatenating ${sceneFiles.length} scenes (Total Duration: ${totalReelDuration}s)...`);
 
-      // Video concat list
-      const concatListPath = path.join(tempDir, 'concat_list.txt');
-      const concatContent = sceneFiles.map(f => `file '${f}'`).join('\n');
-      fs.writeFileSync(concatListPath, concatContent, 'utf8');
-
-      // Audio concat list
+      // Audio concat list (unaffected by crossfades — narration cuts stay
+      // clean so overlapping sentences never blur together)
       const audioConcatListPath = path.join(tempDir, 'audio_concat.txt');
       const audioConcatContent = audioFiles.map(f => `file '${f}'`).join('\n');
       fs.writeFileSync(audioConcatListPath, audioConcatContent, 'utf8');
@@ -325,8 +330,30 @@ export async function assembleReelMp4(params: AssembleReelParams): Promise<Assem
       const rawConcatVideo = path.join(tempDir, 'concat_video.mp4');
       const rawConcatAudio = path.join(tempDir, 'concat_audio.aac');
 
-      // Concat videos
-      await execAsync(`ffmpeg -y -f concat -safe 0 -i "${concatListPath}" -c copy "${rawConcatVideo}"`);
+      if (sceneFiles.length === 1) {
+        await execAsync(`ffmpeg -y -i "${sceneFiles[0]}" -c copy "${rawConcatVideo}"`);
+      } else {
+        // Chain xfade dissolves between every consecutive pair of scenes.
+        // Each transition's offset is exactly the cumulative narration
+        // duration up to that point — see the CROSSFADE_DURATION comment
+        // above for why that lines the dissolve up with scene boundaries
+        // while keeping the combined video the same length as the audio.
+        const inputArgs = sceneFiles.map((f) => `-i "${f}"`).join(' ');
+        let cumulative = 0;
+        let lastLabel = '0:v';
+        const filterParts: string[] = [];
+        for (let i = 1; i < sceneFiles.length; i++) {
+          cumulative += recordedSceneDurations[i - 1];
+          const outLabel = i === sceneFiles.length - 1 ? 'vout' : `vx${i}`;
+          filterParts.push(`[${lastLabel}][${i}:v]xfade=transition=fade:duration=${CROSSFADE_DURATION}:offset=${cumulative}[${outLabel}]`);
+          lastLabel = outLabel;
+        }
+        const filterChain = filterParts.join(';');
+
+        await execAsync(
+          `ffmpeg -y ${inputArgs} -filter_complex "${filterChain}" -map "[vout]" -c:v libx264 -preset ultrafast -pix_fmt yuv420p -r 25 "${rawConcatVideo}"`
+        );
+      }
 
       // Concat audios
       await execAsync(`ffmpeg -y -f concat -safe 0 -i "${audioConcatListPath}" -c copy "${rawConcatAudio}"`);

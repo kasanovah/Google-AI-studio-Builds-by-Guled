@@ -269,20 +269,27 @@ app.get('/api/download-reel-mp4', async (req: Request, res: Response) => {
     // HTTP Range request support for mobile streaming
     const range = req.headers.range;
     if (range) {
+      // A suffix range (`bytes=-500`, meaning "last 500 bytes") has an empty
+      // start; everything else is a normal `bytes=start-end` (end optional).
       const parts = range.replace(/bytes=/, '').split('-');
-      const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : stats.size - 1;
-      const chunksize = end - start + 1;
+      const isSuffix = parts[0] === '';
+      let start = isSuffix ? Math.max(0, stats.size - parseInt(parts[1], 10)) : parseInt(parts[0], 10);
+      let end = isSuffix || !parts[1] ? stats.size - 1 : parseInt(parts[1], 10);
+
+      if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= stats.size) {
+        res.setHeader('Content-Range', `bytes */${stats.size}`);
+        return res.status(416).end();
+      }
+      end = Math.min(end, stats.size - 1);
 
       res.writeHead(206, {
         'Content-Range': `bytes ${start}-${end}/${stats.size}`,
         'Accept-Ranges': 'bytes',
-        'Content-Length': chunksize,
+        'Content-Length': end - start + 1,
         'Content-Type': 'video/mp4',
         'Cache-Control': 'no-cache',
       });
-      const stream = fs.createReadStream(resolvedPath, { start, end });
-      return stream.pipe(res);
+      return pipeWithErrorHandling(fs.createReadStream(resolvedPath, { start, end }), res);
     }
 
     // Full file download. Content-Length is intentionally omitted: Cloud Run
@@ -296,8 +303,7 @@ app.get('/api/download-reel-mp4', async (req: Request, res: Response) => {
       'Cache-Control': 'no-cache',
     });
 
-    const stream = fs.createReadStream(resolvedPath);
-    stream.pipe(res);
+    pipeWithErrorHandling(fs.createReadStream(resolvedPath), res);
   } catch (err: any) {
     console.error('Error serving MP4:', err);
     res.status(500).json({ error: 'Failed to deliver MP4 file' });
@@ -335,6 +341,18 @@ app.get('/api/list-reels', (_req: Request, res: Response) => {
 // instead — omitting Content-Length so the response streams as chunked
 // transfer-encoding when no Range is requested — keeps it under that limit
 // regardless of whether the player asks for a Range up front.
+function pipeWithErrorHandling(stream: fs.ReadStream, res: Response) {
+  stream.on('error', (err) => {
+    console.error('Error streaming file:', err);
+    if (!res.headersSent) {
+      res.status(500).end();
+    } else {
+      res.destroy();
+    }
+  });
+  stream.pipe(res);
+}
+
 app.get('/exports/:filename', (req: Request, res: Response) => {
   const filePath = path.join(exportsDir, path.basename(req.params.filename));
   if (!fs.existsSync(filePath)) {
@@ -343,11 +361,26 @@ app.get('/exports/:filename', (req: Request, res: Response) => {
 
   const stats = fs.statSync(filePath);
   const range = req.headers.range;
+  res.setHeader('Last-Modified', stats.mtime.toUTCString());
+  const ifModifiedSince = req.headers['if-modified-since'];
+  if (ifModifiedSince && new Date(ifModifiedSince) >= new Date(stats.mtime.toUTCString())) {
+    return res.status(304).end();
+  }
 
   if (range) {
+    // A suffix range (`bytes=-500`, meaning "last 500 bytes") has an empty
+    // start; everything else is a normal `bytes=start-end` (end optional).
     const parts = range.replace(/bytes=/, '').split('-');
-    const start = parseInt(parts[0], 10);
-    const end = parts[1] ? parseInt(parts[1], 10) : stats.size - 1;
+    const isSuffix = parts[0] === '';
+    let start = isSuffix ? Math.max(0, stats.size - parseInt(parts[1], 10)) : parseInt(parts[0], 10);
+    let end = isSuffix || !parts[1] ? stats.size - 1 : parseInt(parts[1], 10);
+
+    if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= stats.size) {
+      res.setHeader('Content-Range', `bytes */${stats.size}`);
+      return res.status(416).end();
+    }
+    end = Math.min(end, stats.size - 1);
+
     res.writeHead(206, {
       'Content-Range': `bytes ${start}-${end}/${stats.size}`,
       'Accept-Ranges': 'bytes',
@@ -355,14 +388,14 @@ app.get('/exports/:filename', (req: Request, res: Response) => {
       'Content-Type': 'video/mp4',
       'Cache-Control': 'no-cache',
     });
-    fs.createReadStream(filePath, { start, end }).pipe(res);
+    pipeWithErrorHandling(fs.createReadStream(filePath, { start, end }), res);
   } else {
     res.writeHead(200, {
       'Accept-Ranges': 'bytes',
       'Content-Type': 'video/mp4',
       'Cache-Control': 'no-cache',
     });
-    fs.createReadStream(filePath).pipe(res);
+    pipeWithErrorHandling(fs.createReadStream(filePath), res);
   }
 });
 
