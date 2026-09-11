@@ -236,9 +236,21 @@ export async function assembleReelMp4(params: AssembleReelParams): Promise<Assem
           throw new Error(`Scene ${sceneNumber}: Missing voiceover narration text.`);
         }
 
-        console.log(`[VideoAssembler] Step 1/3: Synthesizing Scene ${sceneNumber} Ubax voiceover...`);
+        // The script step already assigns each scene a fair share of the
+        // user's chosen total duration (falling back to an even split here
+        // if that's missing) — passing it through makes synthesizeSomaliVoice
+        // pad the narration with silence up to at least that length instead
+        // of just returning however long the spoken text naturally runs.
+        // Without this, the actual total duration is whatever the AI's
+        // narration happens to run — which is often noticeably shorter than
+        // the duration the user picked, since word-count-to-seconds is only
+        // ever an estimate.
+        const perSceneTarget = scene.duration || (params.targetDuration ? Math.round(params.targetDuration / scenes.length) : undefined);
+
+        console.log(`[VideoAssembler] Step 1/3: Synthesizing Scene ${sceneNumber} Ubax voiceover (target ${perSceneTarget || 'auto'}s)...`);
         const voiceResult = await synthesizeSomaliVoice({
           text: sceneText,
+          targetDuration: perSceneTarget,
           voiceId: params.voiceId || 'ubax-somali',
           voiceName: params.voiceName || 'Ubax',
           audioUrl: scene.audioUrl,
