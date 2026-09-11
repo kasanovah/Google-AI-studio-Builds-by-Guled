@@ -43,6 +43,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         if (attempt.finishReason) lines.push(`  finishReason: ${attempt.finishReason}`);
       }
 
+      if (data.openai) {
+        if (!data.openai.configured) {
+          lines.push('', 'OPENAI: not configured (no OPENAI_API_KEY set)');
+        } else {
+          lines.push('', `OPENAI ${data.openai.ok ? 'OK' : 'FAILED'} — ${data.openai.model}`);
+          if (data.openai.error) lines.push(`  ${data.openai.error}`);
+        }
+      }
+
       if (data.modelListError) lines.push('', `Model list error: ${data.modelListError}`);
       if (Array.isArray(data.imageCapableModels)) {
         lines.push('', `Models available (${data.imageCapableModels.length}): ${data.imageCapableModels.join(', ') || 'none'}`);

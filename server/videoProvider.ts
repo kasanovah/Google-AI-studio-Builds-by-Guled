@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { GoogleGenAI, GenerateContentConfig } from '@google/genai';
 import { execAsync } from './execAsync.js';
+import { diagnoseOpenAIImage, generateOpenAIImageVisual, isOpenAIConfigured } from './openaiImageProvider.js';
 
 export interface VisualAssetResult {
   assetPath: string;
@@ -339,9 +340,17 @@ export async function discoverImageCapableModels(apiKey: string, force = false):
  * image-capable, and the verbatim error from a real generation attempt.
  */
 export async function diagnoseImageGeneration(): Promise<Record<string, unknown>> {
+  const openai = await diagnoseOpenAIImage();
+
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    return { keyConfigured: false, verdict: 'GEMINI_API_KEY is not set on this server, so every scene uses the offline placeholder graphic.' };
+    return {
+      keyConfigured: false,
+      openai,
+      verdict: openai.ok
+        ? 'GEMINI_API_KEY is not set, but OpenAI image generation works — scenes will use OpenAI visuals.'
+        : 'GEMINI_API_KEY is not set on this server, so every scene uses the offline placeholder graphic.',
+    };
   }
 
   const report: Record<string, unknown> = { keyConfigured: true, keyLength: apiKey.length };
@@ -396,11 +405,14 @@ export async function diagnoseImageGeneration(): Promise<Record<string, unknown>
   }
 
   report.attempts = attempts;
+  report.openai = openai;
   const working = attempts.find((a) => a.ok);
   const textOk = (report.textGeneration as { ok?: boolean } | undefined)?.ok;
 
   if (working) {
     report.verdict = `Image generation works with "${working.model}".`;
+  } else if (openai.ok) {
+    report.verdict = `Gemini image generation is unavailable, but OpenAI works (${openai.model}) — scenes will use OpenAI visuals instead of the placeholder graphic.`;
   } else if (!textOk) {
     report.verdict = 'Neither text nor image generation works with this key — the key itself is rejected or out of quota, so scripts fall back to the canned template and scenes to the placeholder graphic.';
   } else if (discovered.length === 0) {
@@ -1035,6 +1047,28 @@ export async function resolveSceneVisual(params: ResolveVisualParams): Promise<V
   } else {
     aiFailureReason = 'GEMINI_API_KEY is not configured on the server';
     console.warn(`[VideoProvider] Scene ${params.sceneNumber}: ${aiFailureReason} — using offline placeholder graphic.`);
+  }
+
+  // Case 3b: OpenAI as the second image provider. Without this, a depleted
+  // Gemini balance turns every scene into the offline placeholder graphic;
+  // with it, the reel still gets real cinematic visuals from the other
+  // provider. Only runs when an OpenAI key is configured.
+  if (isOpenAIConfigured()) {
+    try {
+      console.log(`[VideoProvider] Falling back to OpenAI image generation for Scene ${params.sceneNumber}...`);
+      const openAiJpg = await generateOpenAIImageVisual(params);
+      return {
+        assetPath: openAiJpg,
+        type: 'image',
+        source: 'ai_generated_visual',
+      };
+    } catch (openAiErr: any) {
+      const openAiReason = openAiErr?.message || 'OpenAI image generation failed';
+      console.warn(`[VideoProvider] OpenAI image generation also failed for Scene ${params.sceneNumber}: ${openAiReason}`);
+      aiFailureReason = aiFailureReason
+        ? `${aiFailureReason} | OpenAI: ${openAiReason}`
+        : openAiReason;
+    }
   }
 
   // Case 4: Dynamic Bespoke Visual Generation (Explaining what this scene is actually saying)
