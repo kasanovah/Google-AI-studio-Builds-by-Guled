@@ -13,7 +13,9 @@ import {
   CheckCircle2,
   ChevronRight,
   Wand2,
-  AlertTriangle
+  AlertTriangle,
+  Check,
+  Clock
 } from 'lucide-react';
 import { 
   AssembledReelResult, 
@@ -287,37 +289,50 @@ export const MobileCreateWorkflow: React.FC<MobileCreateWorkflowProps> = ({
   // -------------------------------------------------------------
   return (
     <div className="w-full flex flex-col gap-4 pb-12">
-      {/* Small Progress Indicator at Top */}
+      {/* Step Progress Indicator */}
       <div className="w-full py-1">
-        <div className="flex items-center justify-between gap-1 overflow-x-auto no-scrollbar py-1">
+        <div className="flex items-center gap-0.5 overflow-x-auto no-scrollbar py-1">
           {stepsList.map((st, idx) => {
             const isCompleted = idx < currentStepIndex;
             const isCurrent = idx === currentStepIndex;
+            const isLast = idx === stepsList.length - 1;
 
             return (
-              <button
-                key={st.id}
-                type="button"
-                onClick={() => setCurrentStep(st.id)}
-                className={`touch-target flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-lg transition-all shrink-0 ${
-                  isCurrent
-                    ? 'text-cyan-400 bg-cyan-500/10 border border-cyan-500/30'
-                    : isCompleted
-                    ? 'text-emerald-400 hover:text-emerald-300'
-                    : 'text-slate-500 hover:text-slate-400'
-                }`}
-              >
-                <span>{isCompleted ? '✓' : isCurrent ? '●' : '○'}</span>
-                <span>{st.label}</span>
-              </button>
+              <React.Fragment key={st.id}>
+                <button
+                  type="button"
+                  onClick={() => setCurrentStep(st.id)}
+                  className="touch-target flex flex-col items-center gap-1 px-1.5 shrink-0 group"
+                >
+                  <span
+                    className={`flex items-center justify-center w-7 h-7 rounded-full text-[11px] font-extrabold transition-all ${
+                      isCompleted
+                        ? 'bg-emerald-500 text-white shadow-sm shadow-emerald-500/30'
+                        : isCurrent
+                        ? 'bg-gradient-to-br from-sky-400 to-cyan-400 text-white shadow-md shadow-cyan-500/40 ring-2 ring-cyan-400/30 ring-offset-2 ring-offset-slate-950'
+                        : 'bg-slate-900 border border-slate-700 text-slate-500 group-hover:border-slate-500'
+                    }`}
+                  >
+                    {isCompleted ? <Check className="w-3.5 h-3.5" strokeWidth={3} /> : idx + 1}
+                  </span>
+                  <span
+                    className={`text-[10px] font-bold tracking-wide whitespace-nowrap ${
+                      isCurrent ? 'text-cyan-300' : isCompleted ? 'text-emerald-400/90' : 'text-slate-500'
+                    }`}
+                  >
+                    {st.label}
+                  </span>
+                </button>
+                {!isLast && (
+                  <span
+                    className={`h-[2px] w-3 sm:w-5 shrink-0 rounded-full -mt-4 ${
+                      isCompleted ? 'bg-emerald-500/70' : 'bg-slate-800'
+                    }`}
+                  />
+                )}
+              </React.Fragment>
             );
           })}
-        </div>
-        <div className="w-full h-1 bg-slate-800/80 rounded-full mt-1.5 overflow-hidden">
-          <div 
-            className="h-full bg-gradient-to-r from-sky-500 to-cyan-400 transition-all duration-300"
-            style={{ width: `${((currentStepIndex + 1) / stepsList.length) * 100}%` }}
-          />
         </div>
       </div>
 
@@ -327,8 +342,11 @@ export const MobileCreateWorkflow: React.FC<MobileCreateWorkflowProps> = ({
       {currentStep === 'topic' && (
         <div className="flex flex-col gap-4 animate-in fade-in duration-200">
           <div>
-            <h2 className="text-xl font-black text-white tracking-tight uppercase">
-              CREATE YOUR REEL
+            <span className="text-[10px] font-bold text-cyan-400 uppercase tracking-[0.2em]">
+              Xeero AI Studio
+            </span>
+            <h2 className="text-2xl font-black tracking-tight uppercase bg-gradient-to-r from-white to-cyan-200 bg-clip-text text-transparent">
+              Create Your Reel
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
               Choose a topic (Dooro mowduuca aad rabto inaad ka hadasho)
@@ -376,21 +394,31 @@ export const MobileCreateWorkflow: React.FC<MobileCreateWorkflowProps> = ({
             </div>
 
             {/* Target Duration Selector */}
-            <div className="flex items-center justify-between bg-slate-900/60 p-2.5 rounded-2xl border border-slate-800">
-              <span className="text-xs font-bold text-slate-300">Dhererka (Duration):</span>
-              <div className="flex items-center gap-1.5">
-                {[30, 45, 60].map(sec => (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-sky-400" />
+                Dhererka (Duration)
+              </span>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { sec: 30, tag: 'Degdeg' },
+                  { sec: 45, tag: 'Caadi' },
+                  { sec: 60, tag: 'Faahfaahsan' },
+                ].map(({ sec, tag }) => (
                   <button
                     key={sec}
                     type="button"
                     onClick={() => setProject(prev => ({ ...prev, targetDuration: sec }))}
-                    className={`px-3 py-1.5 rounded-xl font-bold text-xs transition-all touch-target ${
+                    className={`touch-target flex flex-col items-center gap-0.5 py-2.5 rounded-2xl border font-bold transition-all ${
                       project.targetDuration === sec
-                        ? 'bg-sky-500 text-white shadow-md shadow-sky-500/20'
-                        : 'bg-slate-800 text-slate-400 hover:text-white'
+                        ? 'bg-gradient-to-b from-sky-500 to-cyan-500 border-transparent text-white shadow-md shadow-sky-500/25'
+                        : 'bg-slate-900/70 border-slate-800 text-slate-300 hover:border-slate-700'
                     }`}
                   >
-                    {sec}s
+                    <span className="text-sm">{sec}s</span>
+                    <span className={`text-[10px] font-medium ${project.targetDuration === sec ? 'text-white/80' : 'text-slate-500'}`}>
+                      {tag}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -408,12 +436,17 @@ export const MobileCreateWorkflow: React.FC<MobileCreateWorkflowProps> = ({
                   key={idx}
                   type="button"
                   onClick={() => setProject(prev => ({ ...prev, topic: item.title, title: item.title, description: item.desc }))}
-                  className={`touch-target p-3 rounded-2xl border text-left transition-all flex items-center justify-between gap-2 ${
+                  className={`touch-target relative overflow-hidden pl-4 pr-3 py-3 rounded-2xl border text-left transition-all flex items-center justify-between gap-2 ${
                     project.topic === item.title
                       ? 'bg-sky-950/40 border-sky-500/80 shadow-md shadow-sky-500/10'
                       : 'bg-slate-900/60 border-slate-800 active:bg-slate-800/80'
                   }`}
                 >
+                  <span
+                    className={`absolute left-0 top-0 bottom-0 w-1 ${
+                      project.topic === item.title ? 'bg-gradient-to-b from-sky-400 to-cyan-400' : 'bg-slate-700'
+                    }`}
+                  />
                   <div className="min-w-0 flex-1">
                     <span className="text-[10px] font-bold text-sky-400 block">{item.category}</span>
                     <p className="text-xs font-bold text-white truncate mt-0.5">{item.title}</p>
