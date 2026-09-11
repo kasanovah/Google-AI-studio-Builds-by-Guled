@@ -230,10 +230,9 @@ const PER_SCENE_IMAGE_DEADLINE_MS = 210_000;
 // fails. Names here can go stale at any time — discovery above is what keeps
 // this working.
 const FALLBACK_IMAGE_MODELS = [
-  'gemini-3.1-flash-lite-image',
-  'gemini-3.1-flash-image',
-  'gemini-3-pro-image-preview',
-  'gemini-2.5-flash-image',
+  'gemini-3.1-flash-image', // Nano Banana 2 — generalist workhorse
+  'gemini-3-pro-image', // Nano Banana Pro — highest quality
+  'gemini-2.5-flash-image', // Nano Banana — legacy, widest availability
 ];
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -291,12 +290,12 @@ export async function discoverImageCapableModels(apiKey: string, force = false):
     })
     .map((m) => m.name);
 
-  // Prefer the leaner/faster "flash"-class image models, then everything else.
-  const ranked = [
-    ...imageModels.filter((m) => /flash/.test(m) && /lite/.test(m)),
-    ...imageModels.filter((m) => /flash/.test(m) && !/lite/.test(m)),
-    ...imageModels.filter((m) => !/flash/.test(m)),
-  ].filter((m, i, arr) => arr.indexOf(m) === i);
+  // Prefer flash-class image models (fast and cheap enough to run six times
+  // per reel), then pro-class, then anything else; within each group prefer
+  // stable IDs over -preview/-exp ones.
+  const isPreview = (m: string) => /preview|exp/.test(m);
+  const rank = (m: string) => (/flash/.test(m) ? 0 : /pro/.test(m) ? 1 : 2) * 2 + (isPreview(m) ? 1 : 0);
+  const ranked = [...new Set(imageModels)].sort((a, b) => rank(a) - rank(b));
 
   console.log(`[VideoProvider] Model discovery: ${collected.length} models visible, ${ranked.length} image-capable: ${ranked.join(', ') || 'none'}`);
   cachedImageModels = { models: ranked, at: Date.now() };
@@ -457,17 +456,17 @@ export async function generateAIImageVisual(params: ResolveVisualParams): Promis
     ...(envModel ? [envModel] : []),
     ...discoveredModels,
     ...FALLBACK_IMAGE_MODELS,
-  ].filter((m, idx, arr): m is string => !!m && arr.indexOf(m) === idx).slice(0, 5);
+  ].filter((m, idx, arr): m is string => !!m && arr.indexOf(m) === idx).slice(0, 3);
 
   if (candidateModels.length === 0) {
     throw new Error(`Scene ${sceneNumber}: no image-capable Gemini model is available to this API key`);
   }
 
-  // Two config tiers per model. The first asks for everything that raises
-  // quality (2K render, people allowed — most scene prompts feature a person,
-  // and a default person-generation block would otherwise return no image at
-  // all). The second drops those options for any model that rejects them, so
-  // an unsupported field can never cost us the real visual.
+  // Config tiers, tried in order, each a strict step down from the last.
+  // responseModalities is kept for both of the first two: without asking for
+  // IMAGE output explicitly, an image-capable model can answer with text and
+  // the scene silently falls back to the placeholder graphic. Only the last
+  // tier drops it, for an endpoint that rejects the field outright.
   const configVariants: Array<{ label: string; config: GenerateContentConfig }> = [
     {
       label: 'high-detail',
@@ -481,11 +480,16 @@ export async function generateAIImageVisual(params: ResolveVisualParams): Promis
       },
     },
     {
+      label: 'image-modality',
+      config: {
+        responseModalities: ['IMAGE'],
+        imageConfig: { aspectRatio: '9:16' },
+      },
+    },
+    {
       label: 'baseline',
       config: {
-        imageConfig: {
-          aspectRatio: '9:16',
-        },
+        imageConfig: { aspectRatio: '9:16' },
       },
     },
   ];
