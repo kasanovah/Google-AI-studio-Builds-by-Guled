@@ -314,6 +314,7 @@ export async function assembleReelMp4(params: AssembleReelParams): Promise<Assem
           width: 1080,
           height: 1920,
           fps: 25,
+          wordTimings: voiceResult.wordTimings,
         });
 
         sceneFiles.push(videoResult.videoPath);

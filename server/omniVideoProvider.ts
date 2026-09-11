@@ -7,13 +7,83 @@ export interface SceneRenderResult {
   duration: number;
 }
 
+export interface CaptionWordTiming {
+  text: string;
+  startSec: number;
+  endSec: number;
+}
+
 interface CaptionLayout {
   formattedText: string;
   fontSize: number;
   lineSpacing: number;
+  maxCharsPerLine: number;
   boxHeight: number;
   boxY: number;
   textY: number;
+}
+
+interface PhraseChunk {
+  text: string;
+  startSec: number;
+  endSec: number;
+}
+
+// Groups per-word speech timestamps (from Edge TTS) into short, readable
+// phrase chunks so captions can appear in sync with what Ubax is actually
+// saying at that moment, instead of one static block for the whole scene.
+const MAX_WORDS_PER_CHUNK = 5;
+const MAX_CHUNK_DURATION_SEC = 2.5;
+
+function chunkWordTimingsIntoPhrases(words: CaptionWordTiming[]): PhraseChunk[] {
+  if (!words || words.length === 0) return [];
+  const chunks: PhraseChunk[] = [];
+  let current: CaptionWordTiming[] = [];
+
+  const flush = () => {
+    if (current.length === 0) return;
+    chunks.push({
+      text: current.map((w) => w.text).join(' '),
+      startSec: current[0].startSec,
+      endSec: current[current.length - 1].endSec,
+    });
+    current = [];
+  };
+
+  for (const word of words) {
+    current.push(word);
+    const chunkSpan = word.endSec - current[0].startSec;
+    if (current.length >= MAX_WORDS_PER_CHUNK || chunkSpan >= MAX_CHUNK_DURATION_SEC) {
+      flush();
+    }
+  }
+  flush();
+
+  // Extend each chunk's visible end to the next chunk's start so the
+  // caption never blinks off during a natural micro-pause between words.
+  for (let i = 0; i < chunks.length - 1; i++) {
+    chunks[i].endSec = chunks[i + 1].startSec;
+  }
+
+  return chunks;
+}
+
+function wrapTextToLines(text: string, maxCharsPerLine: number): string[] {
+  const words = (text || '').replace(/\r?\n/g, ' ').trim().split(/\s+/);
+  const lines: string[] = [];
+  let currentLine = '';
+  for (const word of words) {
+    if (!word) continue;
+    const candidate = currentLine ? `${currentLine} ${word}` : word;
+    if (candidate.length <= maxCharsPerLine) {
+      currentLine = candidate;
+    } else {
+      if (currentLine) lines.push(currentLine);
+      currentLine = word;
+    }
+  }
+  if (currentLine) lines.push(currentLine);
+  return lines.length > 0 ? lines : [text || ''];
 }
 
 /**
@@ -52,48 +122,14 @@ function computeCaptionLayout(
   }
 
   // 2. Natural word wrapping (never splits words mid-character)
-  const words = cleanCaption.split(/\s+/);
-  let lines: string[] = [];
-  let currentLine = '';
-
-  for (const word of words) {
-    if (!word) continue;
-    const candidate = currentLine ? `${currentLine} ${word}` : word;
-    if (candidate.length <= maxCharsPerLine) {
-      currentLine = candidate;
-    } else {
-      if (currentLine) {
-        lines.push(currentLine);
-      }
-      currentLine = word;
-    }
-  }
-  if (currentLine) {
-    lines.push(currentLine);
-  }
-  if (lines.length === 0) {
-    lines = [cleanCaption];
-  }
+  let lines: string[] = wrapTextToLines(cleanCaption, maxCharsPerLine);
 
   // 3. Multi-line safety check: if line count > 3, step down font size to prevent overflow
   if (lines.length > 3 && fontSize > 28) {
     fontSize = Math.max(26, fontSize - 6);
     lineSpacing = Math.max(8, lineSpacing - 4);
     maxCharsPerLine = Math.round(maxCharsPerLine * 1.25);
-    const reWrapped: string[] = [];
-    let cur = '';
-    for (const word of words) {
-      if (!word) continue;
-      const test = cur ? `${cur} ${word}` : word;
-      if (test.length <= maxCharsPerLine) {
-        cur = test;
-      } else {
-        if (cur) reWrapped.push(cur);
-        cur = word;
-      }
-    }
-    if (cur) reWrapped.push(cur);
-    lines = reWrapped.length > 0 ? reWrapped : lines;
+    lines = wrapTextToLines(cleanCaption, maxCharsPerLine);
   }
 
   // 4. Calculate dynamic container height and safe vertical placement
@@ -111,6 +147,7 @@ function computeCaptionLayout(
     formattedText: lines.join('\n'),
     fontSize,
     lineSpacing,
+    maxCharsPerLine,
     boxHeight,
     boxY,
     textY,
@@ -127,6 +164,7 @@ export async function renderSceneVideo(params: {
   width?: number;
   height?: number;
   fps?: number;
+  wordTimings?: CaptionWordTiming[];
 }): Promise<SceneRenderResult> {
   const {
     assetPath,
@@ -138,6 +176,7 @@ export async function renderSceneVideo(params: {
     width = 1080,
     height = 1920,
     fps = 25,
+    wordTimings = [],
   } = params;
 
   if (!fs.existsSync(outputDir)) {
@@ -145,11 +184,16 @@ export async function renderSceneVideo(params: {
   }
 
   const rawVideoPath = path.join(outputDir, 'video_raw.mp4');
-  const captionFilePath = path.join(outputDir, 'caption.txt');
 
-  // Compute robust fit-to-box layout and write wrapped text
-  const layout = computeCaptionLayout(captionText, width, height);
-  fs.writeFileSync(captionFilePath, layout.formattedText, 'utf8');
+  // Layout (font size, line wrapping, box height/position) is derived from
+  // the full text that will actually appear across the scene — in synced
+  // mode that's the real spoken words (word timings can cover more or less
+  // text than a separately-written on-screen caption), otherwise the given
+  // caption text. Sizing off the full text guarantees the box is tall/wide
+  // enough for the longest phrase chunk, so it stays visually stable (same
+  // size/position) as shorter phrase chunks cycle through it.
+  const spokenText = wordTimings.length > 0 ? wordTimings.map((w) => w.text).join(' ') : '';
+  const layout = computeCaptionLayout(spokenText || captionText, width, height);
 
   // Font fallback check
   let fontArg = '';
@@ -167,7 +211,38 @@ export async function renderSceneVideo(params: {
 
   // Draw overlay: Top brand pill + Bottom dynamic high-contrast caption
   const topBrandFilter = `drawbox=x=0:y=0:w=${width}:h=200:color=black@0.65:t=fill,drawtext=${fontArg}text='XEERO AI • BARO AI AF SOOMAALI':fontcolor=#38BDF8:fontsize=34:x=(w-text_w)/2:y=80:box=1:boxcolor=black@0.6:boxborderw=12`;
-  const captionFilter = `drawbox=x=0:y=${layout.boxY}:w=${width}:h=${layout.boxHeight}:color=black@0.75:t=fill,drawtext=${fontArg}textfile='${captionFilePath}':fontcolor=#FFFFFF:fontsize=${layout.fontSize}:line_spacing=${layout.lineSpacing}:box=1:boxcolor=#0284C7@0.92:boxborderw=16:fix_bounds=true:x=(w-text_w)/2:y=${layout.textY}:shadowcolor=black@0.85:shadowx=2:shadowy=2`;
+
+  // =========================================================================
+  // Caption rendering: word-boundary timestamps from Edge TTS let captions
+  // appear phrase-by-phrase in sync with what Ubax is actually saying at
+  // that moment, instead of one static block shown for the whole scene.
+  // Falls back to the previous static single-caption behavior whenever
+  // timings are unavailable (attached audio, local flite fallback, etc).
+  // =========================================================================
+  const phraseChunks = chunkWordTimingsIntoPhrases(wordTimings);
+  let captionFilter: string;
+
+  if (phraseChunks.length > 0) {
+    const chunkFilters = phraseChunks.map((chunk, idx) => {
+      const lines = wrapTextToLines(chunk.text, layout.maxCharsPerLine);
+      const chunkFilePath = path.join(outputDir, `caption_${idx}.txt`);
+      fs.writeFileSync(chunkFilePath, lines.join('\n'), 'utf8');
+      const chunkTextHeight = lines.length * layout.fontSize + (lines.length - 1) * layout.lineSpacing;
+      const chunkTextY = layout.boxY + Math.round((layout.boxHeight - chunkTextHeight) / 2);
+      return `drawtext=${fontArg}textfile='${chunkFilePath}':fontcolor=#FFFFFF:fontsize=${layout.fontSize}:line_spacing=${layout.lineSpacing}:box=1:boxcolor=#0284C7@0.92:boxborderw=16:fix_bounds=true:x=(w-text_w)/2:y=${chunkTextY}:shadowcolor=black@0.85:shadowx=2:shadowy=2:enable='between(t,${chunk.startSec.toFixed(2)},${chunk.endSec.toFixed(2)})'`;
+    });
+    // The caption box itself stays visible across the whole spoken span of
+    // this scene (first word to last word) so it never flashes on/off
+    // between individual phrase changes.
+    const spanStart = phraseChunks[0].startSec.toFixed(2);
+    const spanEnd = phraseChunks[phraseChunks.length - 1].endSec.toFixed(2);
+    const boxFilter = `drawbox=x=0:y=${layout.boxY}:w=${width}:h=${layout.boxHeight}:color=black@0.75:t=fill:enable='between(t,${spanStart},${spanEnd})'`;
+    captionFilter = [boxFilter, ...chunkFilters].join(',');
+  } else {
+    const captionFilePath = path.join(outputDir, 'caption.txt');
+    fs.writeFileSync(captionFilePath, layout.formattedText, 'utf8');
+    captionFilter = `drawbox=x=0:y=${layout.boxY}:w=${width}:h=${layout.boxHeight}:color=black@0.75:t=fill,drawtext=${fontArg}textfile='${captionFilePath}':fontcolor=#FFFFFF:fontsize=${layout.fontSize}:line_spacing=${layout.lineSpacing}:box=1:boxcolor=#0284C7@0.92:boxborderw=16:fix_bounds=true:x=(w-text_w)/2:y=${layout.textY}:shadowcolor=black@0.85:shadowx=2:shadowy=2`;
+  }
 
   try {
     if (assetType === 'video') {

@@ -16,12 +16,50 @@ export interface VoiceSynthesisParams {
   totalScenes?: number;
 }
 
+export interface WordTiming {
+  text: string;
+  startSec: number;
+  endSec: number;
+}
+
 export interface VoiceSynthesisResult {
   audioPath: string;
   duration: number; // in seconds
   sampleRate: number;
   voiceUsed: string;
   provider: string;
+  wordTimings?: WordTiming[]; // Real per-word speech timestamps, when available (Edge TTS only)
+}
+
+// Edge TTS metadata ticks are 100-nanosecond units.
+const TICKS_PER_SECOND = 10_000_000;
+
+/**
+ * Parses the word-boundary metadata file Edge TTS writes alongside the audio
+ * (when `wordBoundaryEnabled: true`) into a simple per-word timing array, in
+ * seconds relative to the start of that scene's own audio clip.
+ */
+function parseWordTimings(metadataFilePath: string | null): WordTiming[] | undefined {
+  if (!metadataFilePath || !fs.existsSync(metadataFilePath)) return undefined;
+  try {
+    const raw = JSON.parse(fs.readFileSync(metadataFilePath, 'utf-8'));
+    const items: any[] = Array.isArray(raw?.Metadata) ? raw.Metadata : [];
+    const words = items
+      .filter((item) => item?.Type === 'WordBoundary' && item?.Data?.text?.Text)
+      .map((item) => {
+        const offsetTicks = item.Data.Offset ?? 0;
+        const durationTicks = item.Data.Duration ?? 0;
+        return {
+          text: String(item.Data.text.Text),
+          startSec: offsetTicks / TICKS_PER_SECOND,
+          endSec: (offsetTicks + durationTicks) / TICKS_PER_SECOND,
+        };
+      });
+    return words.length > 0 ? words : undefined;
+  } catch (err: any) {
+    console.warn('[VoiceProvider] Failed to parse word-boundary metadata:', err?.message);
+    return undefined;
+  }
 }
 
 /**
@@ -121,10 +159,13 @@ export async function synthesizeSomaliVoice(params: VoiceSynthesisParams): Promi
   try {
     console.log(`[VoiceProvider] Synthesizing Scene ${sceneNumber} with so-SO-UbaxNeural: "${cleanText.slice(0, 50)}..."`);
     const tts = new MsEdgeTTS();
-    await tts.setMetadata("so-SO-UbaxNeural", OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+    await tts.setMetadata("so-SO-UbaxNeural", OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3, {
+      wordBoundaryEnabled: true,
+    });
 
     const res = await tts.toFile(outputDir, cleanText);
     const rawGeneratedMp3 = res.audioFilePath;
+    const wordTimings = parseWordTimings(res.metadataFilePath);
     tts.close();
 
     if (!fs.existsSync(rawGeneratedMp3)) {
@@ -134,17 +175,22 @@ export async function synthesizeSomaliVoice(params: VoiceSynthesisParams): Promi
     const spokenDuration = await probeAudioDuration(rawGeneratedMp3);
     const finalDuration = targetDuration ? Math.max(targetDuration, Math.ceil(spokenDuration)) : Math.max(Math.ceil(spokenDuration), 3);
 
-    console.log(`[VoiceProvider] Scene ${sceneNumber}: Ubax spoken duration is ${spokenDuration.toFixed(2)}s (allocated: ${finalDuration}s)`);
+    console.log(`[VoiceProvider] Scene ${sceneNumber}: Ubax spoken duration is ${spokenDuration.toFixed(2)}s (allocated: ${finalDuration}s, ${wordTimings ? wordTimings.length : 0} word timings)`);
 
-    // Normalize audio to standard broadcast loudness (-16 LUFS) and export as AAC
+    // Normalize audio to standard broadcast loudness (-16 LUFS) and export as AAC.
+    // Padding is appended after the spoken audio (apad), so word offsets measured
+    // against the raw mp3 remain valid against this final clip too.
     await execAsync(
       `ffmpeg -y -i "${rawGeneratedMp3}" -af "apad=whole_dur=${finalDuration},loudnorm=I=-16:TP=-1.5:LRA=11" -c:a aac -b:a 192k -ar 44100 -ac 2 -t ${finalDuration} "${finalAacPath}"`
     );
 
-    // Clean up temporary raw mp3
+    // Clean up temporary raw mp3 and metadata file
     try {
       if (rawGeneratedMp3 !== finalAacPath && fs.existsSync(rawGeneratedMp3)) {
         fs.unlinkSync(rawGeneratedMp3);
+      }
+      if (res.metadataFilePath && fs.existsSync(res.metadataFilePath)) {
+        fs.unlinkSync(res.metadataFilePath);
       }
     } catch {}
 
@@ -154,6 +200,7 @@ export async function synthesizeSomaliVoice(params: VoiceSynthesisParams): Promi
       sampleRate: 44100,
       voiceUsed: 'Ubax Neural (so-SO-UbaxNeural)',
       provider: 'msedge_ubax_neural',
+      wordTimings,
     };
   } catch (edgeErr: any) {
     console.warn(`[VoiceProvider] Edge TTS error for Scene ${sceneNumber}:`, edgeErr?.message);
