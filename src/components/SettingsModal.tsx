@@ -26,16 +26,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     try {
       const res = await apiFetch('/api/diagnose-visuals');
       const data = await res.json();
+      // Errors come first: the actual failure text is the whole point of
+      // running this, and burying it under a long model list pushes it off
+      // screen on a phone exactly when it matters most.
       const lines: string[] = [data.verdict || 'No verdict returned.'];
-      if (Array.isArray(data.imageCapableModels)) {
-        lines.push('', `Image models available: ${data.imageCapableModels.length ? data.imageCapableModels.join(', ') : 'none'}`);
+
+      if (data.textGeneration) {
+        lines.push('', `TEXT: ${data.textGeneration.ok ? 'OK' : 'FAILED'}`);
+        if (data.textGeneration.error) lines.push(`  ${data.textGeneration.error}`);
       }
-      if (data.modelListError) lines.push('', `Model list error: ${data.modelListError}`);
+
       for (const attempt of data.attempts || []) {
-        lines.push('', `${attempt.ok ? 'OK' : 'FAILED'} — ${attempt.model}`);
+        lines.push('', `IMAGE ${attempt.ok ? 'OK' : 'FAILED'} — ${attempt.model}`);
         if (attempt.error) lines.push(`  ${attempt.error}`);
         if (attempt.blockReason) lines.push(`  blocked: ${attempt.blockReason}`);
         if (attempt.finishReason) lines.push(`  finishReason: ${attempt.finishReason}`);
+      }
+
+      if (data.modelListError) lines.push('', `Model list error: ${data.modelListError}`);
+      if (Array.isArray(data.imageCapableModels)) {
+        lines.push('', `Models available (${data.imageCapableModels.length}): ${data.imageCapableModels.join(', ') || 'none'}`);
       }
       setDiagnosis(lines.join('\n'));
     } catch (err: any) {
