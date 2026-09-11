@@ -1,12 +1,16 @@
 import fs from 'fs';
 import path from 'path';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, GenerateContentConfig } from '@google/genai';
 import { execAsync } from './execAsync.js';
 
 export interface VisualAssetResult {
   assetPath: string;
   type: 'video' | 'image';
   source: 'uploaded_flow' | 'bespoke_scene_visual' | 'matched_asset' | 'ai_generated_visual';
+  // Populated only when AI image generation was attempted and failed, so the
+  // downgrade to the offline placeholder graphic is reported instead of
+  // silently passing as if it were the intended cinematic visual.
+  fallbackReason?: string;
 }
 
 export interface ResolveVisualParams {
@@ -211,16 +215,31 @@ function wrapText(text: string, maxChars: number, maxLines: number): string[] {
   return lines;
 }
 
+// Errors worth retrying rather than immediately downgrading the scene to the
+// offline placeholder: six images are generated back to back per reel, which
+// trips per-minute rate limits easily, and model-overload/timeout responses
+// are routinely fine a few seconds later.
+const TRANSIENT_IMAGE_ERROR = /\b429\b|\b503\b|\b500\b|rate.?limit|quota|resource.?exhausted|overloaded|unavailable|deadline|timed? ?out|ETIMEDOUT|ECONNRESET|socket hang up/i;
+
+// Bounds how long one scene may spend trying to get a real AI image before
+// giving up and using the offline graphic, so a persistently failing model
+// can't stretch a six-scene reel into a multi-minute stall.
+const PER_SCENE_IMAGE_DEADLINE_MS = 210_000;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 /**
  * Generates a real AI image for a scene using its visualPrompt/flowPrompt
  * (written by the script generator as a still-image-generator prompt).
  *
- * Uses `generateContent` on image-capable Gemini models (such as
- * `gemini-3.1-flash-lite-image` or `gemini-3.1-flash-image`), extracting
- * the inline image data from the response candidates.
+ * Uses `generateContent` on image-capable Gemini models, explicitly asking
+ * for IMAGE output and a 9:16 frame, and extracts the inline image data from
+ * the response candidates.
  *
- * Falls through to the next candidate on any error, and throws only if every candidate
- * fails, allowing the caller to fall back to the offline bespoke SVG visual.
+ * Each model is tried at a high-detail config first, then a baseline config
+ * (in case a model rejects the richer options), retrying once on transient
+ * errors. Only when every option is exhausted does it throw, letting the
+ * caller fall back to the offline bespoke SVG visual.
  */
 export async function generateAIImageVisual(params: ResolveVisualParams): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -236,6 +255,7 @@ export async function generateAIImageVisual(params: ResolveVisualParams): Promis
     subject = '',
     action = '',
     environment = '',
+    cameraComposition = '',
     outputDir = '/tmp',
   } = params;
 
@@ -244,7 +264,18 @@ export async function generateAIImageVisual(params: ResolveVisualParams): Promis
     throw new Error(`Scene ${sceneNumber}: No visual prompt available for AI image generation`);
   }
 
-  const fullPrompt = `${promptText}. Vertical 9:16 portrait aspect ratio, premium cinematic editorial photography, sharp focus, realistic proportions. No on-image text, no captions, no watermark, no distorted anatomy, no duplicate or malformed objects.`;
+  // Direction is written as positive description of the wanted image. Listing
+  // unwanted artifacts ("no distorted anatomy", "no malformed objects")
+  // instead both biases image models toward the very thing being named and
+  // reads to safety classifiers as content the prompt is about — which
+  // returns a blocked, image-less response, and every scene then silently
+  // degrades to the offline placeholder graphic.
+  const fullPrompt = [
+    promptText,
+    cameraComposition ? `Shot: ${cameraComposition}.` : '',
+    'Premium cinematic editorial photography for a technology news brand: photorealistic, highly detailed, sharp focus, dramatic professional lighting, authentic real-world materials, natural proportions, rich depth of field.',
+    'Vertical 9:16 portrait composition with the subject clearly framed. Clean image with no lettering, captions, subtitles, logos or watermarks anywhere in the frame.',
+  ].filter(Boolean).join(' ');
 
   if (!fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir, { recursive: true });
@@ -257,11 +288,12 @@ export async function generateAIImageVisual(params: ResolveVisualParams): Promis
       headers: {
         'User-Agent': 'aistudio-build',
       },
-      // Bounds each model attempt so a hung request can't stall the whole
-      // reel; the loop below still falls through to the next candidate
-      // model, and the caller falls back to the offline bespoke visual if
-      // every candidate fails.
-      timeout: 90_000,
+      // Generous per-request bound: a slow but successful high-quality
+      // generation must never be cut off (that downgrades the scene to the
+      // placeholder graphic), while a genuinely hung request still can't
+      // stall the reel. Total time per scene is capped separately by
+      // PER_SCENE_IMAGE_DEADLINE_MS below.
+      timeout: 120_000,
     },
   });
 
@@ -281,51 +313,110 @@ export async function generateAIImageVisual(params: ResolveVisualParams): Promis
     'gemini-3-pro-image',
   ].filter((m, idx, arr): m is string => !!m && arr.indexOf(m) === idx);
 
+  // Two config tiers per model. The first asks for everything that raises
+  // quality (2K render, people allowed — most scene prompts feature a person,
+  // and a default person-generation block would otherwise return no image at
+  // all). The second drops those options for any model that rejects them, so
+  // an unsupported field can never cost us the real visual.
+  const configVariants: Array<{ label: string; config: GenerateContentConfig }> = [
+    {
+      label: 'high-detail',
+      config: {
+        responseModalities: ['IMAGE'],
+        imageConfig: {
+          aspectRatio: '9:16',
+          imageSize: '2K',
+          personGeneration: 'ALLOW_ADULT',
+        },
+      },
+    },
+    {
+      label: 'baseline',
+      config: {
+        imageConfig: {
+          aspectRatio: '9:16',
+        },
+      },
+    },
+  ];
+
+  const deadline = Date.now() + PER_SCENE_IMAGE_DEADLINE_MS;
   let lastError: any = null;
 
   for (const model of candidateModels) {
-    try {
-      const response = await ai.models.generateContent({
-        model,
-        contents: {
-          parts: [{ text: fullPrompt }],
-        },
-        config: {
-          imageConfig: {
-            aspectRatio: '9:16',
-          },
-        },
-      });
-
-      const candidates = response.candidates || [];
-      let imageBytes: string | undefined;
-
-      for (const candidate of candidates) {
-        const parts = candidate.content?.parts || [];
-        for (const part of parts) {
-          if (part.inlineData?.data) {
-            imageBytes = part.inlineData.data;
-            break;
-          }
+    for (const variant of configVariants) {
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        if (Date.now() > deadline) {
+          throw new Error(
+            `AI image generation for Scene ${sceneNumber} exceeded its ${Math.round(PER_SCENE_IMAGE_DEADLINE_MS / 1000)}s budget: ${lastError?.message || 'no successful model'}`
+          );
         }
-        if (imageBytes) break;
+
+        try {
+          const response = await ai.models.generateContent({
+            model,
+            contents: { parts: [{ text: fullPrompt }] },
+            config: variant.config,
+          });
+
+          const candidates = response.candidates || [];
+          let imageBytes: string | undefined;
+
+          for (const candidate of candidates) {
+            const parts = candidate.content?.parts || [];
+            for (const part of parts) {
+              if (part.inlineData?.data) {
+                imageBytes = part.inlineData.data;
+                break;
+              }
+            }
+            if (imageBytes) break;
+          }
+
+          if (!imageBytes) {
+            // Report *why* an image-less response came back — a safety block,
+            // a truncated generation and an empty candidate list are very
+            // different problems, and "no image bytes" alone hides which.
+            const blockReason = response.promptFeedback?.blockReason;
+            const finishReason = candidates[0]?.finishReason;
+            const detail = blockReason
+              ? `blocked: ${blockReason}${response.promptFeedback?.blockReasonMessage ? ` (${response.promptFeedback.blockReasonMessage})` : ''}`
+              : finishReason
+              ? `finishReason: ${finishReason}`
+              : candidates.length === 0
+              ? 'no candidates returned'
+              : 'candidates contained no inline image data';
+            throw new Error(`${model} returned no image — ${detail}`);
+          }
+
+          fs.writeFileSync(jpgPath, Buffer.from(imageBytes, 'base64'));
+
+          if (!fs.existsSync(jpgPath) || fs.statSync(jpgPath).size < 1000) {
+            throw new Error(`AI image for Scene ${sceneNumber} was written but appears invalid`);
+          }
+
+          console.log(
+            `[VideoProvider] Generated AI image for Scene ${sceneNumber} using ${model} (${variant.label}, ${Math.round(fs.statSync(jpgPath).size / 1024)}KB)`
+          );
+          return jpgPath;
+        } catch (err: any) {
+          lastError = err;
+          const message = err?.message || String(err);
+          const transient = TRANSIENT_IMAGE_ERROR.test(message);
+          console.warn(
+            `[VideoProvider] Scene ${sceneNumber} image attempt failed [${model} / ${variant.label} / try ${attempt}]${transient ? ' (transient)' : ''}: ${message}`
+          );
+
+          // Retry the same model/config once for transient failures (rate
+          // limits especially — six scenes generate back to back), otherwise
+          // move straight on to the next configuration.
+          if (transient && attempt === 1 && Date.now() + 6_000 < deadline) {
+            await sleep(5_000);
+            continue;
+          }
+          break;
+        }
       }
-
-      if (!imageBytes) {
-        throw new Error(`Model ${model} returned no image bytes in candidates`);
-      }
-
-      fs.writeFileSync(jpgPath, Buffer.from(imageBytes, 'base64'));
-
-      if (!fs.existsSync(jpgPath) || fs.statSync(jpgPath).size < 1000) {
-        throw new Error(`AI image for Scene ${sceneNumber} was written but appears invalid`);
-      }
-
-      console.log(`[VideoProvider] Generated AI image for Scene ${sceneNumber} using model: ${model}`);
-      return jpgPath;
-    } catch (err: any) {
-      lastError = err;
-      console.warn(`[VideoProvider] AI image generation with ${model} failed for Scene ${sceneNumber}: ${err?.message || err}`);
     }
   }
 
@@ -710,6 +801,7 @@ export async function resolveSceneVisual(params: ResolveVisualParams): Promise<V
   // Only attempted when a Gemini key is configured; any failure (missing key,
   // model unavailable, quota/billing not enabled, network) falls through to
   // the guaranteed-to-work SVG bespoke visual below rather than breaking the reel.
+  let aiFailureReason: string | undefined;
   if (process.env.GEMINI_API_KEY) {
     try {
       console.log(`[VideoProvider] Attempting AI image generation for Scene ${params.sceneNumber} (${params.caption || params.topic})...`);
@@ -720,8 +812,12 @@ export async function resolveSceneVisual(params: ResolveVisualParams): Promise<V
         source: 'ai_generated_visual',
       };
     } catch (aiErr: any) {
-      console.warn(`[VideoProvider] AI image generation unavailable for Scene ${params.sceneNumber}, falling back to bespoke visual: ${aiErr?.message}`);
+      aiFailureReason = aiErr?.message || 'AI image generation failed';
+      console.warn(`[VideoProvider] AI image generation unavailable for Scene ${params.sceneNumber}, falling back to bespoke visual: ${aiFailureReason}`);
     }
+  } else {
+    aiFailureReason = 'GEMINI_API_KEY is not configured on the server';
+    console.warn(`[VideoProvider] Scene ${params.sceneNumber}: ${aiFailureReason} — using offline placeholder graphic.`);
   }
 
   // Case 4: Dynamic Bespoke Visual Generation (Explaining what this scene is actually saying)
@@ -732,6 +828,7 @@ export async function resolveSceneVisual(params: ResolveVisualParams): Promise<V
       assetPath: bespokeJpg,
       type: 'image',
       source: 'bespoke_scene_visual',
+      fallbackReason: aiFailureReason,
     };
   } catch (genErr: any) {
     console.error(`[VideoProvider] Failed to generate visual for Scene ${params.sceneNumber}:`, genErr?.message);

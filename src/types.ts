@@ -124,6 +124,7 @@ export interface AssembledReelResult {
     duration: number;
     caption: string;
     visualSource?: 'uploaded_flow' | 'bespoke_scene_visual' | 'matched_asset' | 'ai_generated_visual';
+    visualNote?: string;
   }>;
   validation?: {
     isMp4: boolean;

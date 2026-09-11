@@ -53,6 +53,7 @@ export interface AssembleReelResult {
     caption: string;
     voiceover?: string;
     visualSource?: string;
+    visualNote?: string;
   }>;
   validation?: {
     isMp4: boolean;
@@ -213,6 +214,7 @@ export async function assembleReelMp4(params: AssembleReelParams): Promise<Assem
       caption: string;
       voiceover?: string;
       visualSource?: string;
+      visualNote?: string;
     }> = [];
 
     try {
@@ -325,6 +327,7 @@ export async function assembleReelMp4(params: AssembleReelParams): Promise<Assem
           caption: scene.caption || '',
           voiceover: scene.voiceover,
           visualSource: visual.source,
+          visualNote: visual.fallbackReason,
         });
       }
 

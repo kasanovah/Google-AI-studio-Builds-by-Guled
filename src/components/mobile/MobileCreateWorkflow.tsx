@@ -235,13 +235,23 @@ export const MobileCreateWorkflow: React.FC<MobileCreateWorkflowProps> = ({
             (s) => s.visualSource === 'bespoke_scene_visual'
           );
           if (fallbackScenes.length === 0) return null;
+          // The server records why the real image couldn't be generated
+          // (safety block, quota, model unavailable...). Showing that exact
+          // reason is the difference between "something looks off" and
+          // knowing what to actually fix.
+          const reason = fallbackScenes.find((s) => s.visualNote)?.visualNote;
           return (
             <div className="w-full max-w-sm flex items-start gap-2 py-2.5 px-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs">
               <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>
-                Sawir AI dhab ah looma soo saarin muuqaal{fallbackScenes.length > 1 ? 'lada' : 'ka'}{' '}
-                {fallbackScenes.map((s) => s.sceneNumber).join(', ')} — waxaa loo isticmaalay sawir beddelaad. Hubi in GEMINI_API_KEY-gaaga lacag/xad haysto.
-              </span>
+              <div className="flex flex-col gap-1">
+                <span>
+                  Sawir AI dhab ah looma soo saarin muuqaal{fallbackScenes.length > 1 ? 'lada' : 'ka'}{' '}
+                  {fallbackScenes.map((s) => s.sceneNumber).join(', ')} — waxaa loo isticmaalay sawir beddelaad.
+                </span>
+                {reason && (
+                  <span className="text-amber-400/80 font-mono text-[10px] break-words">{reason}</span>
+                )}
+              </div>
             </div>
           );
         })()}
