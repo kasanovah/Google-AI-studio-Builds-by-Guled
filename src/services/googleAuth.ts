@@ -36,8 +36,33 @@ provider.setCustomParameters({
   prompt: 'select_account',
 });
 
-// In-memory token cache (NEVER stored in localStorage / sessionStorage)
-let cachedAccessToken: string | null = null;
+// Drive access token cache. Kept in sessionStorage rather than localStorage:
+// sessionStorage is cleared the moment the tab/app is actually closed (not
+// just reloaded or reopened from a home-screen icon), so the token survives
+// normal use — including a PWA relaunch, which was forcing a fresh
+// "Sign in with Google" tap every time — without persisting indefinitely
+// the way localStorage would.
+const DRIVE_TOKEN_STORAGE_KEY = 'xeero_drive_access_token';
+let cachedAccessToken: string | null = (() => {
+  try {
+    return sessionStorage.getItem(DRIVE_TOKEN_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+})();
+
+function persistAccessToken(token: string | null) {
+  try {
+    if (token) {
+      sessionStorage.setItem(DRIVE_TOKEN_STORAGE_KEY, token);
+    } else {
+      sessionStorage.removeItem(DRIVE_TOKEN_STORAGE_KEY);
+    }
+  } catch {
+    // Private browsing / storage disabled — token still works for this
+    // page load via the in-memory variable, it just won't survive reload.
+  }
+}
 
 // Subscribed listeners
 type AuthStateCallback = (user: User | null, token: string | null) => void;
@@ -60,6 +85,7 @@ onAuthStateChanged(auth, async (user: User | null) => {
     notifyListeners(user, cachedAccessToken);
   } else {
     cachedAccessToken = null;
+    persistAccessToken(null);
     notifyListeners(null, null);
   }
 });
@@ -95,6 +121,7 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
     }
 
     cachedAccessToken = credential.accessToken;
+    persistAccessToken(cachedAccessToken);
     notifyListeners(result.user, cachedAccessToken);
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error: any) {
@@ -129,5 +156,6 @@ export const getCurrentUser = (): User | null => {
 export const logoutGoogle = async () => {
   await signOut(auth);
   cachedAccessToken = null;
+  persistAccessToken(null);
   notifyListeners(null, null);
 };
