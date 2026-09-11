@@ -285,10 +285,12 @@ app.get('/api/download-reel-mp4', async (req: Request, res: Response) => {
       return stream.pipe(res);
     }
 
-    // Full file download
+    // Full file download. Content-Length is intentionally omitted: Cloud Run
+    // caps a single non-chunked response at 32MB, which these 30-50MB reel
+    // MP4s exceed — omitting it lets the response stream as chunked
+    // transfer-encoding instead, which isn't subject to that cap.
     res.writeHead(200, {
       'Content-Type': 'video/mp4',
-      'Content-Length': stats.size,
       'Content-Disposition': `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
       'Accept-Ranges': 'bytes',
       'Cache-Control': 'no-cache',
@@ -323,6 +325,44 @@ app.get('/api/list-reels', (_req: Request, res: Response) => {
   } catch (err: any) {
     console.error('Error listing reels:', err);
     res.status(500).json({ success: false, error: err?.message || 'Failed to list reels' });
+  }
+});
+
+// Cloud Run (and similar platforms) cap a single non-chunked HTTP response at
+// 32MB; express.static sends a Content-Length for a plain GET with no Range
+// header, which puts our 30-50MB reel MP4s over that cap and gets the
+// response killed mid-transfer. Serving exports through this dedicated route
+// instead — omitting Content-Length so the response streams as chunked
+// transfer-encoding when no Range is requested — keeps it under that limit
+// regardless of whether the player asks for a Range up front.
+app.get('/exports/:filename', (req: Request, res: Response) => {
+  const filePath = path.join(exportsDir, path.basename(req.params.filename));
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).end();
+  }
+
+  const stats = fs.statSync(filePath);
+  const range = req.headers.range;
+
+  if (range) {
+    const parts = range.replace(/bytes=/, '').split('-');
+    const start = parseInt(parts[0], 10);
+    const end = parts[1] ? parseInt(parts[1], 10) : stats.size - 1;
+    res.writeHead(206, {
+      'Content-Range': `bytes ${start}-${end}/${stats.size}`,
+      'Accept-Ranges': 'bytes',
+      'Content-Length': end - start + 1,
+      'Content-Type': 'video/mp4',
+      'Cache-Control': 'no-cache',
+    });
+    fs.createReadStream(filePath, { start, end }).pipe(res);
+  } else {
+    res.writeHead(200, {
+      'Accept-Ranges': 'bytes',
+      'Content-Type': 'video/mp4',
+      'Cache-Control': 'no-cache',
+    });
+    fs.createReadStream(filePath).pipe(res);
   }
 });
 
