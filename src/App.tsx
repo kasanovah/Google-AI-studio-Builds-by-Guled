@@ -157,6 +157,8 @@ export function App() {
         topic: rawTopic,
         description: rawDesc,
         script: fullScript,
+        scriptSource: data.scriptSource,
+        scriptFallbackReason: data.scriptFallbackReason,
         scenes: generatedScenes,
         audioUrl: null,
         previewUrl: null,

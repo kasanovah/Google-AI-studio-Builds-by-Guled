@@ -1527,6 +1527,10 @@ export async function generateSomaliScript(params: ScriptGenerationParams): Prom
 
   scenes: GeneratedSceneScript[];
 
+  scriptSource: 'gemini' | 'offline_template';
+
+  scriptFallbackReason?: string;
+
 }> {
 
   const { topic, description = '', targetDuration = 30, customScript } = params;
@@ -1549,6 +1553,8 @@ export async function generateSomaliScript(params: ScriptGenerationParams): Prom
 
   let blueprints: SceneBlueprint[] = [];
 
+  let usedGeminiScript = false;
+
 
   // =========================================================================
 
@@ -1570,6 +1576,14 @@ export async function generateSomaliScript(params: ScriptGenerationParams): Prom
 
   let aiGeneratedTitle: string | undefined;
 
+  let scriptFallbackReason: string | undefined;
+
+  if (!process.env.GEMINI_API_KEY) {
+
+    scriptFallbackReason = 'GEMINI_API_KEY is not configured on the server';
+
+  }
+
   if (process.env.GEMINI_API_KEY) {
 
     try {
@@ -1586,13 +1600,17 @@ export async function generateSomaliScript(params: ScriptGenerationParams): Prom
 
       blueprints = aiResult.scenes;
 
+      usedGeminiScript = true;
+
       aiGeneratedTitle = aiResult.title;
 
       console.log(`[ScriptGenerator] Generated script via Gemini (${blueprints.length} scenes) for topic: "${cleanTopic}"`);
 
     } catch (err: any) {
 
-      console.warn(`[ScriptGenerator] Gemini generation failed, falling back to offline templates: ${err?.message}`);
+      scriptFallbackReason = err?.message || 'Gemini script generation failed';
+
+      console.warn(`[ScriptGenerator] Gemini generation failed, falling back to offline templates: ${scriptFallbackReason}`);
 
     }
 
@@ -1652,6 +1670,17 @@ export async function generateSomaliScript(params: ScriptGenerationParams): Prom
   }));
 
 
+  // A canned template script is not about the user's topic at all, so a
+  // silent fallback ships a reel about the wrong subject. Report which
+  // source produced this script, and why, so the app can say so plainly.
+  const scriptSource: 'gemini' | 'offline_template' = usedGeminiScript ? 'gemini' : 'offline_template';
+
+  if (scriptSource === 'offline_template') {
+
+    console.warn(`[ScriptGenerator] Serving OFFLINE TEMPLATE script (not about "${cleanTopic}"): ${scriptFallbackReason || 'unknown reason'}`);
+
+  }
+
   return {
 
     title: aiGeneratedTitle || topic || 'Xeero AI Reel',
@@ -1661,6 +1690,10 @@ export async function generateSomaliScript(params: ScriptGenerationParams): Prom
     targetDuration,
 
     scenes: finalScenes,
+
+    scriptSource,
+
+    scriptFallbackReason: scriptSource === 'offline_template' ? (scriptFallbackReason || 'Gemini script generation was unavailable') : undefined,
 
   };
 

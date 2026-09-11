@@ -316,6 +316,21 @@ export async function diagnoseImageGeneration(): Promise<Record<string, unknown>
 
   const report: Record<string, unknown> = { keyConfigured: true, keyLength: apiKey.length };
 
+  // Text generation is checked first and separately: if it fails too, the
+  // problem is the key/quota itself rather than anything specific to image
+  // models, and the reel's script is silently falling back to the canned
+  // offline template as well.
+  try {
+    const ai = buildGenAI(apiKey, 30_000);
+    const textResponse = await ai.models.generateContent({
+      model: process.env.GEMINI_MODEL?.trim() || 'gemini-3.6-flash',
+      contents: 'Reply with the single word: OK',
+    });
+    report.textGeneration = { ok: !!textResponse.text?.trim(), sample: (textResponse.text || '').trim().slice(0, 40) };
+  } catch (err: any) {
+    report.textGeneration = { ok: false, error: (err?.message || String(err)).slice(0, 300) };
+  }
+
   let discovered: string[] = [];
   try {
     discovered = await discoverImageCapableModels(apiKey, true);
@@ -352,9 +367,17 @@ export async function diagnoseImageGeneration(): Promise<Record<string, unknown>
 
   report.attempts = attempts;
   const working = attempts.find((a) => a.ok);
-  report.verdict = working
-    ? `Image generation works with "${working.model}".`
-    : 'No model produced an image — see attempts[] for the exact error from each.';
+  const textOk = (report.textGeneration as { ok?: boolean } | undefined)?.ok;
+
+  if (working) {
+    report.verdict = `Image generation works with "${working.model}".`;
+  } else if (!textOk) {
+    report.verdict = 'Neither text nor image generation works with this key — the key itself is rejected or out of quota, so scripts fall back to the canned template and scenes to the placeholder graphic.';
+  } else if (discovered.length === 0) {
+    report.verdict = 'Text generation works but this key can see no image-capable model — image generation is likely not enabled for this project (it usually requires billing enabled).';
+  } else {
+    report.verdict = 'Text works, image models are visible, but none produced an image — see attempts[] for the exact error from each.';
+  }
   return report;
 }
 

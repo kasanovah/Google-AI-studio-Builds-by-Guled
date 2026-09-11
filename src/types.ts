@@ -58,6 +58,11 @@ export interface ReelProject {
   topic: string;
   description?: string;
   script?: string;
+  // Whether the script is a real AI script about this topic, or the canned
+  // offline template used when Gemini is unreachable — a template script is
+  // not about the user's topic at all, so this must never pass unnoticed.
+  scriptSource?: 'gemini' | 'offline_template';
+  scriptFallbackReason?: string;
   targetDuration: number; // e.g. 30, 45, 60 seconds
   aspectRatio: AspectRatio;
   pacing: ReelPacing;

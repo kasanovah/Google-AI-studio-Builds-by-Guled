@@ -533,6 +533,28 @@ export const MobileCreateWorkflow: React.FC<MobileCreateWorkflowProps> = ({
             </div>
           </div>
 
+          {/* A template script is generic canned content, NOT about the
+              topic the user asked for — shipping that silently is worse
+              than failing, so it is called out before anything else. */}
+          {project.scriptSource === 'offline_template' && (
+            <div className="flex items-start gap-2 py-3 px-4 rounded-2xl bg-rose-500/10 border border-rose-500/40 text-rose-200 text-xs">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
+              <div className="flex flex-col gap-1">
+                <span className="font-bold">
+                  Digniin: Qoraalkani MAAHA mid AI uu ka sameeyay mawduucaaga.
+                </span>
+                <span>
+                  Gemini lama gaari karin, markaa waxaa la isticmaalay qoraal guud oo horay loo diyaariyay. Ka hubi Settings → “Hubi Sawirada AI”.
+                </span>
+                {project.scriptFallbackReason && (
+                  <span className="text-rose-300/80 font-mono text-[10px] break-words">
+                    {project.scriptFallbackReason}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Large Readable Somali Text Area */}
           <div className="flex flex-col gap-2">
             {isEditingFullScript ? (
