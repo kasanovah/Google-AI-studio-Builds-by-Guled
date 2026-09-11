@@ -50,7 +50,12 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
   const handleDownloadDirect = async (filename: string) => {
     setDownloadingFile(filename);
     try {
-      // Direct binary download via blob URL
+      // Direct binary download via blob URL. The server streams this as
+      // chunked transfer-encoding (no Content-Length), so it never hits
+      // Cloud Run's 32MB non-chunked response cap — a base64 JSON fallback
+      // used to exist for when this failed, but base64-encoding a 30-50MB
+      // video inflates it by ~33%, which blew straight through that same
+      // cap in the other direction and made the failure worse, not better.
       const url = `/api/download-reel-mp4?filename=${encodeURIComponent(filename)}`;
       const res = await fetch(url);
       if (res.ok) {
@@ -67,28 +72,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
           URL.revokeObjectURL(objUrl);
         }, 2000);
       } else {
-        // Base64 fallback
-        const b64Res = await fetch(`/api/download-reel-mp4?filename=${encodeURIComponent(filename)}&b64=1`);
-        const b64Json = await b64Res.json();
-        if (b64Json.success && b64Json.base64) {
-          const byteChars = atob(b64Json.base64);
-          const byteNums = new Array(byteChars.length);
-          for (let i = 0; i < byteChars.length; i++) {
-            byteNums[i] = byteChars.charCodeAt(i);
-          }
-          const blob = new Blob([new Uint8Array(byteNums)], { type: 'video/mp4' });
-          const objUrl = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.style.display = 'none';
-          a.href = objUrl;
-          a.download = filename;
-          document.body.appendChild(a);
-          a.click();
-          setTimeout(() => {
-            document.body.removeChild(a);
-            URL.revokeObjectURL(objUrl);
-          }, 2000);
-        }
+        throw new Error(`Download failed (${res.status})`);
       }
     } catch (err) {
       console.error('Download failed:', err);

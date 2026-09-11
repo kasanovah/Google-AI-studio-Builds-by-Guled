@@ -46,85 +46,44 @@ export const ReelPreviewPlayer: React.FC<ReelPreviewPlayerProps> = ({
   // Strictly require a valid assembledResult URL or project previewUrl — NO OLD REEL FALLBACK
   const videoUrl = assembledResult?.mp4Url || assembledResult?.downloadUrl || project.previewUrl || null;
 
-  // Preload video into in-memory Blob to prevent preview iframe navigation cookie errors
+  // The <video> element streams directly from videoUrl (/exports/:filename,
+  // which supports Range requests + chunked transfer-encoding) rather than
+  // this component eagerly fetching the whole file into memory first — that
+  // used to run in parallel with the browser's own native video load of the
+  // same URL, doubling bandwidth/memory for every preview and occasionally
+  // racing the server (the native load getting aborted mid-stream when the
+  // blob swap landed). The in-memory blob fetch now only runs as a fallback
+  // if native playback genuinely fails to load (handleVideoError below).
   useEffect(() => {
-    let active = true;
-    let createdUrl: string | null = null;
+    setBlobUrl(null);
+    setBlobLoading(false);
+  }, [videoUrl]);
 
-    async function loadVideoBlob() {
-      if (!videoUrl) {
-        setBlobUrl(null);
-        setBlobLoading(false);
-        return;
+  const handleVideoError = async () => {
+    if (blobUrl || blobLoading || !assembledResult?.filename) return;
+    setBlobLoading(true);
+    try {
+      const directUrl = `/api/download-reel-mp4?filename=${encodeURIComponent(assembledResult.filename)}`;
+      const res = await fetch(directUrl);
+      if (res.ok) {
+        const buf = await res.arrayBuffer();
+        const b = new Blob([buf], { type: 'video/mp4' });
+        setBlobUrl(URL.createObjectURL(b));
       }
-      setBlobLoading(true);
-      try {
-        const directUrl = assembledResult?.filename
-          ? `/api/download-reel-mp4?filename=${encodeURIComponent(assembledResult.filename)}`
-          : videoUrl;
-
-        const res = await fetch(directUrl);
-        if (res.ok) {
-          const contentType = res.headers.get('content-type') || '';
-          if (contentType.includes('video/mp4')) {
-            const buf = await res.arrayBuffer();
-            const view = new Uint8Array(buf.slice(0, 16));
-            if (view[0] !== 0x3C && view.length > 8) { // Not HTML '<'
-              const b = new Blob([buf], { type: 'video/mp4' });
-              createdUrl = URL.createObjectURL(b);
-              if (active) {
-                setBlobUrl(createdUrl);
-                setBlobLoading(false);
-                return;
-              }
-            }
-          }
-        }
-
-        // Fallback to Base64 endpoint if direct fetch was intercepted
-        if (assembledResult?.filename) {
-          const b64Res = await fetch(`/api/download-reel-mp4?filename=${encodeURIComponent(assembledResult.filename)}&b64=1`);
-          if (b64Res.ok) {
-            const b64Json = await b64Res.json();
-            if (b64Json.success && b64Json.base64) {
-              const byteCharacters = atob(b64Json.base64);
-              const byteNumbers = new Array(byteCharacters.length);
-              for (let i = 0; i < byteCharacters.length; i++) {
-                byteNumbers[i] = byteCharacters.charCodeAt(i);
-              }
-              const byteArray = new Uint8Array(byteNumbers);
-              const b = new Blob([byteArray], { type: 'video/mp4' });
-              createdUrl = URL.createObjectURL(b);
-              if (active) {
-                setBlobUrl(createdUrl);
-                setBlobLoading(false);
-                return;
-              }
-            }
-          }
-        }
-
-        if (active) {
-          setBlobUrl(videoUrl);
-          setBlobLoading(false);
-        }
-      } catch {
-        if (active) {
-          setBlobUrl(videoUrl);
-          setBlobLoading(false);
-        }
-      }
+    } catch (err) {
+      console.error('[ReelPreviewPlayer] Fallback blob load failed:', err);
+    } finally {
+      setBlobLoading(false);
     }
+  };
 
-    loadVideoBlob();
-
+  useEffect(() => {
     return () => {
-      active = false;
-      if (createdUrl) {
-        URL.revokeObjectURL(createdUrl);
+      if (blobUrl && blobUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(blobUrl);
       }
     };
-  }, [videoUrl, assembledResult?.filename]);
+  }, [blobUrl]);
 
   const togglePlay = () => {
     if (!videoRef.current) return;
@@ -321,6 +280,7 @@ export const ReelPreviewPlayer: React.FC<ReelPreviewPlayerProps> = ({
               onTimeUpdate={handleTimeUpdate}
               onLoadedMetadata={handleLoadedMetadata}
               onEnded={() => setIsPlaying(false)}
+              onError={handleVideoError}
               onClick={togglePlay}
               // object-contain (not object-cover) guarantees the whole
               // 1080x1920 frame is always visible, never cropped — cover

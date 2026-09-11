@@ -224,7 +224,6 @@ app.get('/api/assemble-reel/:jobId', requireFirebaseAuth(), (req: Request, res: 
 app.get('/api/download-reel-mp4', async (req: Request, res: Response) => {
   try {
     const requestedFile = (req.query.filename as string) || '';
-    const isBase64Fallback = req.query.b64 === '1';
 
     let resolvedPath = '';
     if (requestedFile) {
@@ -253,18 +252,6 @@ app.get('/api/download-reel-mp4', async (req: Request, res: Response) => {
 
     const stats = fs.statSync(resolvedPath);
     const filename = path.basename(resolvedPath);
-
-    // Base64 JSON fallback for safe iframe memory extraction
-    if (isBase64Fallback) {
-      const fileBuffer = fs.readFileSync(resolvedPath);
-      return res.json({
-        success: true,
-        filename,
-        size: stats.size,
-        mimeType: 'video/mp4',
-        base64: fileBuffer.toString('base64'),
-      });
-    }
 
     // HTTP Range request support for mobile streaming
     const range = req.headers.range;
