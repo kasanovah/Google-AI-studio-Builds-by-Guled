@@ -511,8 +511,11 @@ export const MobileCreateWorkflow: React.FC<MobileCreateWorkflowProps> = ({
         <div className="flex flex-col gap-4 animate-in fade-in duration-200">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-xl font-black text-white tracking-tight uppercase">
-                REEL SCRIPT
+              <span className="text-[10px] font-bold text-cyan-400 uppercase tracking-[0.2em]">
+                Xeero AI Studio
+              </span>
+              <h2 className="text-2xl font-black tracking-tight uppercase bg-gradient-to-r from-white to-cyan-200 bg-clip-text text-transparent">
+                Reel Script
               </h2>
               <p className="text-xs text-slate-400 mt-0.5">
                 Qoraalka Af-Soomaaliga ee muuqanaya laguna hadlayo
@@ -622,8 +625,11 @@ export const MobileCreateWorkflow: React.FC<MobileCreateWorkflowProps> = ({
       {currentStep === 'voice' && (
         <div className="flex flex-col gap-4 animate-in fade-in duration-200">
           <div>
-            <h2 className="text-xl font-black text-white tracking-tight uppercase">
-              SOMALI VOICE
+            <span className="text-[10px] font-bold text-cyan-400 uppercase tracking-[0.2em]">
+              Xeero AI Studio
+            </span>
+            <h2 className="text-2xl font-black tracking-tight uppercase bg-gradient-to-r from-white to-cyan-200 bg-clip-text text-transparent">
+              Somali Voice
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
               Dooro codka AI ee ku hadlaya muuqaalkaaga. Riix "Preview" si aad u dhagaysatid.
@@ -712,8 +718,11 @@ export const MobileCreateWorkflow: React.FC<MobileCreateWorkflowProps> = ({
       {currentStep === 'scenes' && (
         <div className="flex flex-col gap-4 animate-in fade-in duration-200">
           <div>
-            <h2 className="text-xl font-black text-white tracking-tight uppercase">
-              SCENES
+            <span className="text-[10px] font-bold text-cyan-400 uppercase tracking-[0.2em]">
+              Xeero AI Studio
+            </span>
+            <h2 className="text-2xl font-black tracking-tight uppercase bg-gradient-to-r from-white to-cyan-200 bg-clip-text text-transparent">
+              Scenes
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
               Taabo muuqaal kasta si aad wax uga beddesho qoraalka ama sawirka
@@ -814,8 +823,11 @@ export const MobileCreateWorkflow: React.FC<MobileCreateWorkflowProps> = ({
       {currentStep === 'preview' && (
         <div className="flex flex-col items-center gap-4 animate-in fade-in duration-200">
           <div className="w-full text-center">
-            <h2 className="text-xl font-black text-white tracking-tight uppercase">
-              PREVIEW REEL
+            <span className="text-[10px] font-bold text-cyan-400 uppercase tracking-[0.2em]">
+              Xeero AI Studio
+            </span>
+            <h2 className="text-2xl font-black tracking-tight uppercase bg-gradient-to-r from-white to-cyan-200 bg-clip-text text-transparent">
+              Preview Reel
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
               Hubi muuqaallada ka hor inta aadan bilaabin — video dhabta ah waxaa la sameeyaa marka aad taabato "GENERATE / FINALIZE REEL"
