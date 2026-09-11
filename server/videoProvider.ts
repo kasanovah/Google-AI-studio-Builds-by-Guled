@@ -221,6 +221,22 @@ function wrapText(text: string, maxChars: number, maxLines: number): string[] {
 // are routinely fine a few seconds later.
 const TRANSIENT_IMAGE_ERROR = /\b429\b|\b503\b|\b500\b|rate.?limit|quota|resource.?exhausted|overloaded|unavailable|deadline|timed? ?out|ETIMEDOUT|ECONNRESET|socket hang up/i;
 
+// A depleted balance is not a transient rate limit: it returns 429 too, but
+// retrying it, trying another model, or trying the next scene all fail
+// identically until someone tops the account up. Without this distinction a
+// six-scene reel burns through ~50 doomed requests with backoff sleeps
+// between them before producing the same placeholder graphics anyway.
+const BILLING_EXHAUSTED_ERROR = /prepayment credits are depleted|billing|free.?tier.*not available|exceeded your current quota/i;
+
+const isBillingExhausted = (message: string) => BILLING_EXHAUSTED_ERROR.test(message);
+
+// Set when a billing-exhausted error is seen, so the rest of the render (and
+// any render in the next few minutes) skips straight to the offline graphic
+// instead of re-proving the same thing scene after scene.
+let imageGenerationBlockedUntil = 0;
+let imageGenerationBlockedReason = '';
+const BILLING_BLOCK_TTL_MS = 5 * 60 * 1000;
+
 // Bounds how long one scene may spend trying to get a real AI image before
 // giving up and using the offline graphic, so a persistently failing model
 // can't stretch a six-scene reel into a multi-minute stall.
@@ -556,6 +572,17 @@ export async function generateAIImageVisual(params: ResolveVisualParams): Promis
         } catch (err: any) {
           lastError = err;
           const message = err?.message || String(err);
+
+          // An exhausted balance fails every model identically, so stop the
+          // whole reel's image generation here rather than working through
+          // the remaining models, variants, retries and scenes.
+          if (isBillingExhausted(message)) {
+            imageGenerationBlockedUntil = Date.now() + BILLING_BLOCK_TTL_MS;
+            imageGenerationBlockedReason = message.slice(0, 300);
+            console.error(`[VideoProvider] Gemini billing/quota exhausted — skipping AI images for this render: ${imageGenerationBlockedReason}`);
+            throw new Error(`Gemini image generation unavailable: ${imageGenerationBlockedReason}`, { cause: err });
+          }
+
           const transient = TRANSIENT_IMAGE_ERROR.test(message);
           console.warn(
             `[VideoProvider] Scene ${sceneNumber} image attempt failed [${model} / ${variant.label} / try ${attempt}]${transient ? ' (transient)' : ''}: ${message}`
@@ -956,7 +983,10 @@ export async function resolveSceneVisual(params: ResolveVisualParams): Promise<V
   // model unavailable, quota/billing not enabled, network) falls through to
   // the guaranteed-to-work SVG bespoke visual below rather than breaking the reel.
   let aiFailureReason: string | undefined;
-  if (process.env.GEMINI_API_KEY) {
+  if (Date.now() < imageGenerationBlockedUntil) {
+    aiFailureReason = imageGenerationBlockedReason;
+    console.warn(`[VideoProvider] Scene ${params.sceneNumber}: skipping AI image (Gemini billing/quota exhausted this render).`);
+  } else if (process.env.GEMINI_API_KEY) {
     try {
       console.log(`[VideoProvider] Attempting AI image generation for Scene ${params.sceneNumber} (${params.caption || params.topic})...`);
       const aiJpg = await generateAIImageVisual(params);

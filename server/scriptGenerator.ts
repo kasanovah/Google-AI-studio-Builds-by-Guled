@@ -1366,7 +1366,14 @@ Return ONLY the structured data — no extra commentary.`;
       }
     } catch (err: any) {
       lastError = err;
-      console.warn(`[ScriptGenerator] Attempt with model "${model}" failed (${err?.message || err}). Trying fallback model...`);
+      const message = err?.message || String(err);
+      // An exhausted balance rejects every model the same way, so trying the
+      // rest just delays the same outcome.
+      if (/prepayment credits are depleted|billing|exceeded your current quota/i.test(message)) {
+        console.error(`[ScriptGenerator] Gemini billing/quota exhausted — not trying further models: ${message}`);
+        throw err;
+      }
+      console.warn(`[ScriptGenerator] Attempt with model "${model}" failed (${message}). Trying fallback model...`);
     }
   }
 

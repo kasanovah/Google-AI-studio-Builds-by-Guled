@@ -248,6 +248,11 @@ export const MobileCreateWorkflow: React.FC<MobileCreateWorkflowProps> = ({
                   Sawir AI dhab ah looma soo saarin muuqaal{fallbackScenes.length > 1 ? 'lada' : 'ka'}{' '}
                   {fallbackScenes.map((s) => s.sceneNumber).join(', ')} — waxaa loo isticmaalay sawir beddelaad.
                 </span>
+                {/credits are depleted|billing|exceeded your current quota/i.test(reason || '') && (
+                  <span className="font-bold">
+                    Sababta: lacagta (credits) ee Gemini API waa dhammaatay — ku cusbooneysii ai.studio/projects.
+                  </span>
+                )}
                 {reason && (
                   <span className="text-amber-400/80 font-mono text-[10px] break-words">{reason}</span>
                 )}
@@ -543,9 +548,15 @@ export const MobileCreateWorkflow: React.FC<MobileCreateWorkflowProps> = ({
                 <span className="font-bold">
                   Digniin: Qoraalkani MAAHA mid AI uu ka sameeyay mawduucaaga.
                 </span>
-                <span>
-                  Gemini lama gaari karin, markaa waxaa la isticmaalay qoraal guud oo horay loo diyaariyay. Ka hubi Settings → “Hubi Sawirada AI”.
-                </span>
+                {/credits are depleted|billing|exceeded your current quota/i.test(project.scriptFallbackReason || '') ? (
+                  <span>
+                    Lacagta (credits) ee Gemini API waa dhammaatay. Fadlan ku cusbooneysii ai.studio/projects, ka dibna isku day mar kale.
+                  </span>
+                ) : (
+                  <span>
+                    Gemini lama gaari karin, markaa waxaa la isticmaalay qoraal guud oo horay loo diyaariyay. Ka hubi Settings → “Hubi Sawirada AI”.
+                  </span>
+                )}
                 {project.scriptFallbackReason && (
                   <span className="text-rose-300/80 font-mono text-[10px] break-words">
                     {project.scriptFallbackReason}
