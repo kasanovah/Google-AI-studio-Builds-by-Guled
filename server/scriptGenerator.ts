@@ -1367,13 +1367,14 @@ Return ONLY the structured data — no extra commentary.`;
     } catch (err: any) {
       lastError = err;
       const message = err?.message || String(err);
-      // An exhausted balance rejects every model the same way, so trying the
-      // rest just delays the same outcome.
+      // Billing rejections still fall through to the next model rather than
+      // aborting: models differ in free-tier availability, so a Flash model
+      // can still answer on free quota when a paid-only one will not.
       if (/prepayment credits are depleted|billing|exceeded your current quota/i.test(message)) {
-        console.error(`[ScriptGenerator] Gemini billing/quota exhausted — not trying further models: ${message}`);
-        throw err;
+        console.warn(`[ScriptGenerator] "${model}" rejected for billing/quota — trying next model.`);
+      } else {
+        console.warn(`[ScriptGenerator] Attempt with model "${model}" failed (${message}). Trying fallback model...`);
       }
-      console.warn(`[ScriptGenerator] Attempt with model "${model}" failed (${message}). Trying fallback model...`);
     }
   }
 

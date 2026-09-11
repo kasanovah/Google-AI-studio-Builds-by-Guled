@@ -245,10 +245,16 @@ const PER_SCENE_IMAGE_DEADLINE_MS = 210_000;
 // Last-resort model IDs, only used if asking the API for its real model list
 // fails. Names here can go stale at any time — discovery above is what keeps
 // this working.
+// Ordered cheapest-first on purpose. Six images are generated per reel, so
+// model choice dominates the cost of the whole product: Nano Banana
+// (2.5-flash-image) has a free-tier allowance and is plenty for a 1080x1920
+// frame, while the Pro image models are paid-only and several times dearer
+// per image. Pro is kept last as a fallback, not a default.
 const FALLBACK_IMAGE_MODELS = [
-  'gemini-3.1-flash-image', // Nano Banana 2 — generalist workhorse
-  'gemini-3-pro-image', // Nano Banana Pro — highest quality
-  'gemini-2.5-flash-image', // Nano Banana — legacy, widest availability
+  'gemini-2.5-flash-image', // Nano Banana — has a free tier, cheapest paid rate
+  'gemini-3.1-flash-lite-image', // Nano Banana 2 Lite
+  'gemini-3.1-flash-image', // Nano Banana 2
+  'gemini-3-pro-image', // Nano Banana Pro — paid only, last resort
 ];
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -309,8 +315,17 @@ export async function discoverImageCapableModels(apiKey: string, force = false):
   // Prefer flash-class image models (fast and cheap enough to run six times
   // per reel), then pro-class, then anything else; within each group prefer
   // stable IDs over -preview/-exp ones.
+  // Cheapest-capable first: 2.5-flash-image (free tier available), then other
+  // flash-class models, then paid-only pro-class; stable IDs before
+  // preview/experimental ones within each group.
   const isPreview = (m: string) => /preview|exp/.test(m);
-  const rank = (m: string) => (/flash/.test(m) ? 0 : /pro/.test(m) ? 1 : 2) * 2 + (isPreview(m) ? 1 : 0);
+  const tier = (m: string) => {
+    if (/2\.5-flash-image/.test(m)) return 0;
+    if (/flash/.test(m)) return 1;
+    if (/pro/.test(m)) return 2;
+    return 3;
+  };
+  const rank = (m: string) => tier(m) * 2 + (isPreview(m) ? 1 : 0);
   const ranked = [...new Set(imageModels)].sort((a, b) => rank(a) - rank(b));
 
   console.log(`[VideoProvider] Model discovery: ${collected.length} models visible, ${ranked.length} image-capable: ${ranked.join(', ') || 'none'}`);
@@ -490,7 +505,10 @@ export async function generateAIImageVisual(params: ResolveVisualParams): Promis
         responseModalities: ['IMAGE'],
         imageConfig: {
           aspectRatio: '9:16',
-          imageSize: '2K',
+          // 1K, not 2K: the reel renders at 1080x1920, so a 2K frame is
+          // mostly thrown away by the downscale while costing noticeably
+          // more per image (and free-tier image allowances are 1K).
+          imageSize: '1K',
           personGeneration: 'ALLOW_ADULT',
         },
       },
@@ -512,8 +530,11 @@ export async function generateAIImageVisual(params: ResolveVisualParams): Promis
 
   const deadline = Date.now() + PER_SCENE_IMAGE_DEADLINE_MS;
   let lastError: any = null;
+  let billingFailures = 0;
+  let lastBillingMessage = '';
 
   for (const model of candidateModels) {
+    modelLoop_variant:
     for (const variant of configVariants) {
       for (let attempt = 1; attempt <= 2; attempt++) {
         if (Date.now() > deadline) {
@@ -573,14 +594,16 @@ export async function generateAIImageVisual(params: ResolveVisualParams): Promis
           lastError = err;
           const message = err?.message || String(err);
 
-          // An exhausted balance fails every model identically, so stop the
-          // whole reel's image generation here rather than working through
-          // the remaining models, variants, retries and scenes.
+          // A depleted balance is an account-level problem, so retrying this
+          // model or trying its other config tiers cannot help. Move to the
+          // next model though rather than giving up outright: models differ
+          // in free-tier availability, so a cheaper one may still answer on
+          // free quota when the paid-only ones cannot.
           if (isBillingExhausted(message)) {
-            imageGenerationBlockedUntil = Date.now() + BILLING_BLOCK_TTL_MS;
-            imageGenerationBlockedReason = message.slice(0, 300);
-            console.error(`[VideoProvider] Gemini billing/quota exhausted — skipping AI images for this render: ${imageGenerationBlockedReason}`);
-            throw new Error(`Gemini image generation unavailable: ${imageGenerationBlockedReason}`, { cause: err });
+            billingFailures += 1;
+            lastBillingMessage = message.slice(0, 300);
+            console.warn(`[VideoProvider] Scene ${sceneNumber}: ${model} rejected for billing/quota — trying next model.`);
+            break modelLoop_variant;
           }
 
           const transient = TRANSIENT_IMAGE_ERROR.test(message);
@@ -599,6 +622,16 @@ export async function generateAIImageVisual(params: ResolveVisualParams): Promis
         }
       }
     }
+  }
+
+  // Only when every candidate model was rejected for billing is this an
+  // account-level dead end worth short-circuiting for the remaining scenes;
+  // a mix of failures could still mean another model would have worked.
+  if (billingFailures >= candidateModels.length) {
+    imageGenerationBlockedUntil = Date.now() + BILLING_BLOCK_TTL_MS;
+    imageGenerationBlockedReason = lastBillingMessage;
+    console.error(`[VideoProvider] Every image model rejected for billing/quota — skipping AI images for the rest of this render: ${lastBillingMessage}`);
+    throw new Error(`Gemini image generation unavailable: ${lastBillingMessage}`);
   }
 
   throw new Error(`All AI image models failed for Scene ${sceneNumber}: ${lastError?.message || 'unknown error'}`);
