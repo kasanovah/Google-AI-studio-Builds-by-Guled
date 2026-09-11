@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { X, Settings, CheckCircle2, Volume2, Cpu } from 'lucide-react';
 import { ReelProject } from '../types';
+import { apiFetch } from '../services/apiClient';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -16,6 +17,34 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   project,
   setProject,
 }) => {
+  const [diagnosing, setDiagnosing] = useState(false);
+  const [diagnosis, setDiagnosis] = useState<string | null>(null);
+
+  const runVisualDiagnostic = async () => {
+    setDiagnosing(true);
+    setDiagnosis(null);
+    try {
+      const res = await apiFetch('/api/diagnose-visuals');
+      const data = await res.json();
+      const lines: string[] = [data.verdict || 'No verdict returned.'];
+      if (Array.isArray(data.imageCapableModels)) {
+        lines.push('', `Image models available: ${data.imageCapableModels.length ? data.imageCapableModels.join(', ') : 'none'}`);
+      }
+      if (data.modelListError) lines.push('', `Model list error: ${data.modelListError}`);
+      for (const attempt of data.attempts || []) {
+        lines.push('', `${attempt.ok ? 'OK' : 'FAILED'} — ${attempt.model}`);
+        if (attempt.error) lines.push(`  ${attempt.error}`);
+        if (attempt.blockReason) lines.push(`  blocked: ${attempt.blockReason}`);
+        if (attempt.finishReason) lines.push(`  finishReason: ${attempt.finishReason}`);
+      }
+      setDiagnosis(lines.join('\n'));
+    } catch (err: any) {
+      setDiagnosis(`Diagnostic failed: ${err?.message || err}`);
+    } finally {
+      setDiagnosing(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -115,6 +144,33 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               onChange={(e) => setProject(prev => ({ ...prev, showWatermark: e.target.checked }))}
               className="w-5 h-5 accent-sky-500 rounded cursor-pointer"
             />
+          </div>
+
+          {/* AI image self-check: when scenes come out as the offline
+              placeholder graphic instead of real cinematic visuals, this
+              reports the actual cause (missing key, quota, safety block,
+              no image-capable model) rather than leaving it a mystery. */}
+          <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex flex-col gap-2">
+            <div>
+              <div className="text-xs font-bold text-white">Hubi Sawirada AI (Check AI visuals)</div>
+              <div className="text-[11px] text-slate-400">
+                Tijaabi in sawirada Gemini si sax ah u shaqeynayaan
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={runVisualDiagnostic}
+              disabled={diagnosing}
+              className="touch-target w-full py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-60 text-white font-bold text-xs flex items-center justify-center gap-2"
+            >
+              <Cpu className="w-4 h-4 text-sky-400" />
+              <span>{diagnosing ? 'Waa la hubinayaa...' : 'Bilow Hubinta'}</span>
+            </button>
+            {diagnosis && (
+              <pre className="text-[10px] leading-relaxed text-slate-300 bg-black/50 border border-slate-800 rounded-lg p-2.5 overflow-x-auto whitespace-pre-wrap break-words max-h-56">
+                {diagnosis}
+              </pre>
+            )}
           </div>
         </div>
 

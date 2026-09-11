@@ -226,7 +226,137 @@ const TRANSIENT_IMAGE_ERROR = /\b429\b|\b503\b|\b500\b|rate.?limit|quota|resourc
 // can't stretch a six-scene reel into a multi-minute stall.
 const PER_SCENE_IMAGE_DEADLINE_MS = 210_000;
 
+// Last-resort model IDs, only used if asking the API for its real model list
+// fails. Names here can go stale at any time — discovery above is what keeps
+// this working.
+const FALLBACK_IMAGE_MODELS = [
+  'gemini-3.1-flash-lite-image',
+  'gemini-3.1-flash-image',
+  'gemini-3-pro-image-preview',
+  'gemini-2.5-flash-image',
+];
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function buildGenAI(apiKey: string, timeout: number) {
+  return new GoogleGenAI({
+    apiKey,
+    httpOptions: { headers: { 'User-Agent': 'aistudio-build' }, timeout },
+  });
+}
+
+// Hardcoded model IDs rot: Google renames and retires image models, and a
+// guessed name fails with a 404 that looks identical to "image generation is
+// broken". Asking the API which models this key can actually use, and which
+// of those generate images, keeps this working across renames instead of
+// silently degrading every scene to the offline placeholder graphic.
+let cachedImageModels: { models: string[]; at: number } | null = null;
+const MODEL_DISCOVERY_TTL_MS = 30 * 60 * 1000;
+
+export async function discoverImageCapableModels(apiKey: string, force = false): Promise<string[]> {
+  if (!force && cachedImageModels && Date.now() - cachedImageModels.at < MODEL_DISCOVERY_TTL_MS) {
+    return cachedImageModels.models;
+  }
+
+  const ai = buildGenAI(apiKey, 30_000);
+  const collected: Array<{ name: string; displayName: string; description: string; actions: string[] }> = [];
+
+  const pager = await ai.models.list();
+  let page = pager.page;
+  for (let guard = 0; guard < 10; guard++) {
+    for (const model of page) {
+      const name = (model.name || '').replace(/^models\//, '');
+      if (!name) continue;
+      collected.push({
+        name,
+        displayName: model.displayName || '',
+        description: model.description || '',
+        actions: model.supportedActions || [],
+      });
+    }
+    if (!pager.hasNextPage()) break;
+    page = await pager.nextPage();
+  }
+
+  // An image model is identified by its own advertised capabilities where
+  // available, and otherwise by the naming/description conventions Google
+  // uses for them ("...-image", "image generation", Imagen).
+  const imageModels = collected
+    .filter((m) => {
+      const haystack = `${m.name} ${m.displayName} ${m.description}`.toLowerCase();
+      const advertises = m.actions.some((a) => /image/i.test(a) && !/embed/i.test(a));
+      const namedLikeImageModel = /(^|[-_])image|imagen|image generation|nano.?banana/.test(haystack);
+      const isEmbeddingOrVision = /embed|aqa/.test(haystack);
+      return (advertises || namedLikeImageModel) && !isEmbeddingOrVision;
+    })
+    .map((m) => m.name);
+
+  // Prefer the leaner/faster "flash"-class image models, then everything else.
+  const ranked = [
+    ...imageModels.filter((m) => /flash/.test(m) && /lite/.test(m)),
+    ...imageModels.filter((m) => /flash/.test(m) && !/lite/.test(m)),
+    ...imageModels.filter((m) => !/flash/.test(m)),
+  ].filter((m, i, arr) => arr.indexOf(m) === i);
+
+  console.log(`[VideoProvider] Model discovery: ${collected.length} models visible, ${ranked.length} image-capable: ${ranked.join(', ') || 'none'}`);
+  cachedImageModels = { models: ranked, at: Date.now() };
+  return ranked;
+}
+
+/**
+ * Full picture of why scene visuals are or aren't being generated: whether a
+ * key is configured, which models it can actually see, which of those look
+ * image-capable, and the verbatim error from a real generation attempt.
+ */
+export async function diagnoseImageGeneration(): Promise<Record<string, unknown>> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return { keyConfigured: false, verdict: 'GEMINI_API_KEY is not set on this server, so every scene uses the offline placeholder graphic.' };
+  }
+
+  const report: Record<string, unknown> = { keyConfigured: true, keyLength: apiKey.length };
+
+  let discovered: string[] = [];
+  try {
+    discovered = await discoverImageCapableModels(apiKey, true);
+    report.imageCapableModels = discovered;
+  } catch (err: any) {
+    report.modelListError = err?.message || String(err);
+  }
+
+  const toTry = [...discovered, ...FALLBACK_IMAGE_MODELS].filter((m, i, arr) => arr.indexOf(m) === i).slice(0, 6);
+  const attempts: Array<Record<string, unknown>> = [];
+
+  for (const model of toTry) {
+    try {
+      const ai = buildGenAI(apiKey, 60_000);
+      const response = await ai.models.generateContent({
+        model,
+        contents: { parts: [{ text: 'A single ripe red apple on a plain wooden table, cinematic lighting, photorealistic.' }] },
+        config: { imageConfig: { aspectRatio: '9:16' } },
+      });
+      const hasImage = (response.candidates || []).some((c) =>
+        (c.content?.parts || []).some((p) => p.inlineData?.data)
+      );
+      attempts.push({
+        model,
+        ok: hasImage,
+        blockReason: response.promptFeedback?.blockReason,
+        finishReason: response.candidates?.[0]?.finishReason,
+      });
+      if (hasImage) break;
+    } catch (err: any) {
+      attempts.push({ model, ok: false, error: (err?.message || String(err)).slice(0, 300) });
+    }
+  }
+
+  report.attempts = attempts;
+  const working = attempts.find((a) => a.ok);
+  report.verdict = working
+    ? `Image generation works with "${working.model}".`
+    : 'No model produced an image — see attempts[] for the exact error from each.';
+  return report;
+}
 
 /**
  * Generates a real AI image for a scene using its visualPrompt/flowPrompt
@@ -282,36 +412,33 @@ export async function generateAIImageVisual(params: ResolveVisualParams): Promis
   }
   const jpgPath = path.join(outputDir, `scene_${sceneNumber}_ai_visual.jpg`);
 
-  const ai = new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      },
-      // Generous per-request bound: a slow but successful high-quality
-      // generation must never be cut off (that downgrades the scene to the
-      // placeholder graphic), while a genuinely hung request still can't
-      // stall the reel. Total time per scene is capped separately by
-      // PER_SCENE_IMAGE_DEADLINE_MS below.
-      timeout: 120_000,
-    },
-  });
+  // Generous per-request bound: a slow but successful high-quality
+  // generation must never be cut off (that downgrades the scene to the
+  // placeholder graphic), while a genuinely hung request still can't stall
+  // the reel. Total time per scene is capped by PER_SCENE_IMAGE_DEADLINE_MS.
+  const ai = buildGenAI(apiKey, 120_000);
+
+  // Models this key can really use come first (asked once, then cached);
+  // an explicit override and the static list are only backstops. Previously
+  // this was a hardcoded guess at model IDs, so a single rename silently
+  // turned every scene into the offline placeholder.
+  let discoveredModels: string[] = [];
+  try {
+    discoveredModels = await discoverImageCapableModels(apiKey);
+  } catch (err: any) {
+    console.warn(`[VideoProvider] Could not list available models, using fallback IDs: ${err?.message || err}`);
+  }
 
   const envModel = process.env.GEMINI_IMAGE_MODEL?.trim();
-  const isDeprecated = envModel && (
-    envModel.includes('2.5') ||
-    envModel.includes('2.0') ||
-    envModel.includes('1.5')
-  );
-
-  // Preferred image models: nano banana series models
   const candidateModels: string[] = [
-    envModel && !isDeprecated ? envModel : 'gemini-3.1-flash-lite-image',
-    'gemini-3.1-flash-lite-image',
-    'gemini-3.1-flash-image',
-    'gemini-3-pro-image-preview',
-    'gemini-3-pro-image',
-  ].filter((m, idx, arr): m is string => !!m && arr.indexOf(m) === idx);
+    ...(envModel ? [envModel] : []),
+    ...discoveredModels,
+    ...FALLBACK_IMAGE_MODELS,
+  ].filter((m, idx, arr): m is string => !!m && arr.indexOf(m) === idx).slice(0, 5);
+
+  if (candidateModels.length === 0) {
+    throw new Error(`Scene ${sceneNumber}: no image-capable Gemini model is available to this API key`);
+  }
 
   // Two config tiers per model. The first asks for everything that raises
   // quality (2K render, people allowed — most scene prompts feature a person,

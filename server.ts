@@ -5,6 +5,7 @@ import path from 'path';
 import { requireFirebaseAuth } from './server/authMiddleware.js';
 import { generateSomaliScript } from './server/scriptGenerator.js';
 import { assembleReelMp4, AssembleReelResult } from './server/videoAssembler.js';
+import { diagnoseImageGeneration } from './server/videoProvider.js';
 
 const app = express();
 // Hosting platforms like Render assign a port at runtime via the PORT env
@@ -72,6 +73,20 @@ app.get('/api/health', (_req: Request, res: Response) => {
     ffmpeg: true,
     platform: 'xeero-ai-reel-studio-flow-optimized',
   });
+});
+
+// Reports why scene visuals are or aren't real AI images: whether a Gemini
+// key is configured, which models it can actually see, and the verbatim error
+// from a live generation attempt against each candidate. Exists because a
+// failed image call is otherwise indistinguishable, from the outside, from a
+// reel that simply chose the offline placeholder graphic.
+app.get('/api/diagnose-visuals', requireFirebaseAuth(), rateLimit({ windowMs: 10 * 60 * 1000, max: 10 }), async (_req: Request, res: Response) => {
+  try {
+    const report = await diagnoseImageGeneration();
+    res.json(report);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Diagnostic failed' });
+  }
 });
 
 // Script generation endpoint (offline / deterministic, no Gemini)
