@@ -1270,7 +1270,7 @@ export async function generateScenesWithGemini(params: {
 
 
   const { topic, description = '', targetDuration } = params;
-
+  const hasBrief = description.trim().length > 0;
   const sceneCount = 6;
 
   const approxWordsPerScene = Math.max(8, Math.round(((targetDuration / sceneCount) * 2.6)));
@@ -1310,7 +1310,19 @@ export async function generateScenesWithGemini(params: {
   const prompt = `You are the senior scriptwriter for Xeero AI, a Somali-language AI/technology media brand. Write a complete 6-scene vertical (9:16) Reel script explaining the following topic to a Somali-speaking audience in Somalia and worldwide.
 
 TOPIC: "${topic}"
-${description ? `ADDITIONAL CONTEXT: "${description}"\n` : ''}
+${hasBrief ? `
+USER BRIEF (production instructions — read carefully):
+"""
+${description}
+"""
+
+CRITICAL — this brief is PRODUCTION INSTRUCTIONS FOR YOU, THE SCRIPTWRITER. It is NOT narration and must NEVER be read aloud by the voice actor (Ubax).
+- The brief may be written in Somali, English, or a mix of both. Understand it fully regardless of language.
+- It may contain directives about pacing, structure, hook style, what to include/exclude (e.g. "no intro", "start immediately with the result", "sync every scene tightly to the narration", a specific duration), tone, or subject matter.
+- APPLY every directive you find to how you structure and write the script.
+- The "voiceover" field of every scene must contain ONLY natural spoken Somali narration about the TOPIC itself — never any part of the brief's wording, never meta-commentary about the video, never phrases that describe what the video should do (e.g. never say things like "samee", "isticmaal", "ha isticmaalin", "scene-ka", "caption-ka", "muuqaalka ha noqdo", "bilow si xoog leh" as instructions spoken to the viewer). If a directive can't be expressed as natural content, just follow it silently in how the script is built — do not mention it.
+- Do not translate the brief into narration. Do not append the brief (or any part of it) to the voiceover. Do not have the voiceover "acknowledge" or "explain" the instructions.
+` : ''}
 TARGET TOTAL DURATION: ${targetDuration} seconds across exactly 6 scenes (~${Math.round(targetDuration / sceneCount)}s each).
 
 STRICT SOMALI LANGUAGE RULES:
@@ -1320,7 +1332,7 @@ STRICT SOMALI LANGUAGE RULES:
 - Each scene's voiceover should be roughly ${approxWordsPerScene} words — enough to comfortably fill ~${Math.round(targetDuration / sceneCount)} seconds of natural spoken pacing (about 2-3 words per second), not more.
 
 STRUCTURE (exactly 6 scenes, in order):
-1. Hook — state the problem or surprising fact that makes someone stop scrolling in the first 2-3 seconds. Never open with a generic greeting or announcement like "Asc dhammaan", "Maanta waxaan ka hadlaynaa...", or "Ku soo dhawaada..." — lead with the curiosity or value itself, e.g. the style of "AI-kan wuxuu kuu qaban karaa shaqo aad saacado ku qaadan lahayd."
+1. Hook — state the problem or surprising fact that makes someone stop scrolling in the first 2-3 seconds. Never open with a generic greeting or announcement like "Asc dhammaan", "Maanta waxaan ka hadlaynaa...", or "Ku soo dhawaada..." — lead with the curiosity or value itself, e.g. the style of "AI-kan wuxuu kuu qaban karaa shaqo aad saacado ku qaadan lahayd."${hasBrief ? ' If the brief above asks for something specific here (e.g. no separate intro, open immediately on a result, a particular hook angle), follow it exactly — but express it purely as content, never as a spoken instruction.' : ''}
 2-5. Explanation — build the idea step by step with concrete, specific detail (not vague generalities). Each scene must be visually and narratively distinct from the others — no repeated concepts.
 6. Outro/CTA — close with an inspiring one-line takeaway, and set caption to exactly "Ku Xirnow Xeero AI!" (voiceover can vary but should invite the viewer to follow Xeero AI).
 
@@ -1441,6 +1453,62 @@ Return ONLY the structured data — no extra commentary.`;
 }
 
 
+// Sentence-level signatures of a PRODUCTION INSTRUCTION rather than spoken
+// narration content. This is a last-resort safety net on top of the
+// prompt-level instruction/narration separation in generateScenesWithGemini
+// above — it should rarely trigger, but if a directive from the user's brief
+// ever leaks into a generated "voiceover" field, this strips that sentence
+// before it can reach the TTS engine.
+const PRODUCTION_INSTRUCTION_PATTERNS: RegExp[] = [
+  /\bsamee\s+(reel|muuqaal|video)\b/i,
+  /^\s*samee\b/i,
+  /\bscene\s*\d*\b/i,
+  /\bha\s+isticmaalin\b/i,
+  /\bisticmaal\s+(intro|caption|scene|muuqaal|qoraal)\b/i,
+  /\bku\s+dar\s+(caption|qoraal|scene|muuqaal)\b/i,
+  /\bmuuqaalka\s+ha\s+noqdo\b/i,
+  /\bqoraalka\s+ku\s+qor\b/i,
+  /\bcaption(s)?\b/i,
+  /\bvoiceover(script)?\b/i,
+  /\bduration\b/i,
+  /\b\d+[-\s]?(second|seconds)\b/i,
+  /\bbilow\s+(si\s+xoog\s+leh|degdeg|isla\s+markiiba)\b/i,
+  /\bbilow\s+\d/i,
+];
+
+/**
+ * VOICEOVER PURITY CHECK — verifies a generated voiceover contains only
+ * spoken narration, not leaked production instructions, before it can ever
+ * reach the TTS engine. Strips any sentence matching a known
+ * instruction-style signature; if that empties the whole voiceover, falls
+ * back to the scene's own keyMessage (always plain narration content by
+ * construction), and only as a final resort returns the original text
+ * rather than ever sending empty audio.
+ */
+function sanitizeVoiceoverText(rawVoiceover: string, fallback?: string): string {
+  const text = (rawVoiceover || '').trim();
+  if (!text) return (fallback || '').trim() || text;
+
+  const sentences = text.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
+  const clean = sentences.filter((sentence) => {
+    const isInstruction = PRODUCTION_INSTRUCTION_PATTERNS.some((re) => re.test(sentence));
+    if (isInstruction) {
+      console.warn(`[ScriptGenerator] Voiceover purity check stripped a production-instruction sentence: "${sentence}"`);
+    }
+    return !isInstruction;
+  });
+
+  const result = clean.join(' ').trim();
+  if (result) return result;
+
+  const safeFallback = (fallback || '').trim();
+  if (safeFallback) {
+    console.warn('[ScriptGenerator] Voiceover was entirely production instructions; using keyMessage as narration instead.');
+    return safeFallback;
+  }
+  return text;
+}
+
 /**
 
  * Generate a complete, coherent 6-scene Somali Reel script.
@@ -1463,7 +1531,16 @@ export async function generateSomaliScript(params: ScriptGenerationParams): Prom
 
   const { topic, description = '', targetDuration = 30, customScript } = params;
 
-  const combinedInput = `${topic} ${description} ${customScript || ''}`.trim();
+  // The user's raw brief may arrive split across `description` and/or the
+  // legacy `customScript` param. Both are PRODUCTION INSTRUCTIONS for the AI
+  // interpreter below to read and follow — never literal narration. They are
+  // merged into a single brief and handed to Gemini as context; nothing here
+  // ever splits this text into per-line voiceover, which is what previously
+  // let raw instructions (e.g. "Ha isticmaalin intro. Scene kasta ha la
+  // jaanqaado hadalka.") get read aloud verbatim by Ubax.
+  const brief = [description, customScript].map(s => (s || '').trim()).filter(Boolean).join('\n\n');
+
+  const combinedInput = `${topic} ${brief}`.trim();
 
   const domain = detectDomain(combinedInput);
 
@@ -1475,92 +1552,25 @@ export async function generateSomaliScript(params: ScriptGenerationParams): Prom
 
   // =========================================================================
 
-  // Case 1: Custom User Script parsing
+  // Case 1: Real AI Generation via Gemini (any topic, not limited to the
 
-  // =========================================================================
+  // fixed template domains below). The brief (topic + description +
 
-  if (customScript && customScript.trim().length > 20) {
+  // customScript) is interpreted by the model as production instructions —
 
-    const rawLines = customScript
+  // see the prompt in generateScenesWithGemini for the enforced separation
 
-      .split(/\n+/)
+  // between instructions and spoken narration. Falls through silently to the
 
-      .map(l => l.trim())
+  // offline templates if no API key is configured or the call fails for any
 
-      .filter(l => l.length > 5);
-
-
-    if (rawLines.length >= 2) {
-
-      const sceneCount = Math.min(6, Math.max(3, rawLines.length));
-
-      blueprints = rawLines.slice(0, sceneCount).map((line, idx) => {
-
-        const isFirst = idx === 0;
-
-        const isLast = idx === sceneCount - 1;
-
-        const sceneNum = idx + 1;
-
-
-        return {
-
-          voiceover: line,
-
-          caption: isFirst ? `1. Bilowga: ${cleanTopic}` : isLast ? `Ku Xirnow Xeero AI!` : `${sceneNum}. Qodobka ${sceneNum}`,
-
-          keyMessage: line.length > 60 ? line.slice(0, 58) + '...' : line,
-
-          visualObjective: `Visualizing key point of scene ${sceneNum} for ${cleanTopic}`,
-
-          subject: `Muuqaalka ${sceneNum}: ${cleanTopic}`,
-
-          action: `Falanqeynta qodobka: ${line.slice(0, 40)}`,
-
-          environment: `Goobta tignoolajiyada ee ku habboon mawduuca`,
-
-          cameraComposition: isFirst
-
-            ? 'Macro ground-level POV with dramatic rim lighting'
-
-            : isLast
-
-            ? 'Cinematic centered slow push-in'
-
-            : 'Dynamic 3D system tracking shot',
-
-          visualPrompt: `Cinematic 9:16 vertical visualization illustrating: ${line}`,
-
-          flowPrompt: `Vertical 9:16 cinematic video tracking: ${line}, 24fps smooth motion`,
-
-          visualKeywords: ['xeero ai', cleanTopic.slice(0, 15), `scene ${sceneNum}`],
-
-          visualUrl: undefined,
-
-        };
-
-      });
-
-    }
-
-  }
-
-
-  // =========================================================================
-
-  // Case 2: Real AI Generation via Gemini (any topic, not limited to the
-
-  // fixed template domains below). Falls through silently to the offline
-
-  // templates if no API key is configured or the call fails for any reason —
-
-  // a reel must always be produced, never a hard error.
+  // reason — a reel must always be produced, never a hard error.
 
   // =========================================================================
 
   let aiGeneratedTitle: string | undefined;
 
-  if (blueprints.length === 0 && process.env.GEMINI_API_KEY) {
+  if (process.env.GEMINI_API_KEY) {
 
     try {
 
@@ -1568,7 +1578,7 @@ export async function generateSomaliScript(params: ScriptGenerationParams): Prom
 
         topic: cleanTopic,
 
-        description,
+        description: brief,
 
         targetDuration,
 
@@ -1591,7 +1601,7 @@ export async function generateSomaliScript(params: ScriptGenerationParams): Prom
 
   // =========================================================================
 
-  // Case 3: Domain-Aware Blueprint Generation (offline fallback)
+  // Case 2: Domain-Aware Blueprint Generation (offline fallback)
 
   // =========================================================================
 
@@ -1611,7 +1621,7 @@ export async function generateSomaliScript(params: ScriptGenerationParams): Prom
 
     duration: baseDuration,
 
-    voiceover: bp.voiceover,
+    voiceover: sanitizeVoiceoverText(bp.voiceover, bp.keyMessage),
 
     caption: bp.caption,
 

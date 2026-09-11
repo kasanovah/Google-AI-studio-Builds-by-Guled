@@ -88,8 +88,17 @@ export function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           topic: rawTopic || rawDesc.slice(0, 40),
+          // The Description/Story box is a creative brief for the AI to
+          // interpret (topic, pacing/structure instructions, etc.) — never
+          // literal narration. It used to be auto-promoted to `customScript`
+          // (and split line-by-line into verbatim voiceover) whenever it had
+          // more than one line, which meant a multi-sentence production
+          // brief like "Bilow si xoog leh. Ha isticmaalin intro." got read
+          // aloud by Ubax word-for-word instead of being followed as an
+          // instruction. The backend's AI script generator now does that
+          // interpretation itself, so the raw description is passed through
+          // once, as description only.
           description: rawDesc,
-          customScript: (project as any).customScript || project.script || (rawDesc.split('\n').filter(l => l.trim()).length > 1 ? rawDesc : undefined),
           targetDuration: project.targetDuration || 35,
           pacing: project.pacing || 'dynamic',
         }),
