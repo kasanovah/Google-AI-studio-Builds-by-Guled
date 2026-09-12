@@ -1,4 +1,5 @@
 import { GoogleGenAI, Type } from '@google/genai';
+import { generateScenesWithOpenAI } from './openaiScriptProvider.js';
 
 
 export interface ScriptGenerationParams {
@@ -82,7 +83,7 @@ export type TopicDomain =
   | 'CUSTOM_GENERAL';
 
 
-interface SceneBlueprint {
+export interface SceneBlueprint {
 
   voiceover: string;
 
@@ -1250,64 +1251,25 @@ const GEMINI_SCRIPT_SCHEMA = {
 
  */
 
-export async function generateScenesWithGemini(params: {
-
+/**
+ * The single source of truth for how a Xeero AI reel script is written.
+ *
+ * Shared by every script provider so that switching provider never silently
+ * changes the editorial rules — above all the separation between production
+ * instructions (which the AI interprets) and the voiceover (which Ubax reads
+ * aloud, and which must never contain those instructions).
+ */
+export function buildScriptPrompt(params: {
   topic: string;
-
   description?: string;
-
   targetDuration: number;
-
-}): Promise<{ title: string; scenes: SceneBlueprint[] }> {
-
-  const apiKey = process.env.GEMINI_API_KEY;
-
-  if (!apiKey) {
-
-    throw new Error('GEMINI_API_KEY is not configured');
-
-  }
-
-
+}): string {
   const { topic, description = '', targetDuration } = params;
   const hasBrief = description.trim().length > 0;
   const sceneCount = 6;
-
   const approxWordsPerScene = Math.max(8, Math.round(((targetDuration / sceneCount) * 2.6)));
 
-
-  const ai = new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      },
-      // A hung request would otherwise block this job indefinitely; bounding
-      // it means a bad model attempt fails fast enough for the next
-      // candidate in the fallback list below to get a real chance.
-      timeout: 60_000,
-    },
-  });
-
-  // Filter out any discontinued/deprecated models (like 2.5, 2.0, 1.5)
-  const envModel = process.env.GEMINI_MODEL?.trim();
-  const isDeprecated = envModel && (
-    envModel.includes('2.5') ||
-    envModel.includes('2.0') ||
-    envModel.includes('1.5') ||
-    envModel.includes('gemini-pro')
-  );
-
-  // Preferred model order: gemini-3.6-flash, gemini-3.1-flash-lite, gemini-3.8-flash, gemini-flash-latest
-  const candidateModels: string[] = [
-    envModel && !isDeprecated ? envModel : 'gemini-3.6-flash',
-    'gemini-3.6-flash',
-    'gemini-3.1-flash-lite',
-    'gemini-3.8-flash',
-    'gemini-flash-latest',
-  ].filter((m, idx, arr) => arr.indexOf(m) === idx);
-
-  const prompt = `You are the senior scriptwriter for Xeero AI, a Somali-language AI/technology media brand. Write a complete 6-scene vertical (9:16) Reel script explaining the following topic to a Somali-speaking audience in Somalia and worldwide.
+  return `You are the senior scriptwriter for Xeero AI, a Somali-language AI/technology media brand. Write a complete 6-scene vertical (9:16) Reel script explaining the following topic to a Somali-speaking audience in Somalia and worldwide.
 
 TOPIC: "${topic}"
 ${hasBrief ? `
@@ -1342,6 +1304,65 @@ VISUAL FIELDS (English):
 - If the same person, product, or setting reasonably recurs across multiple scenes, describe their visual details (appearance, clothing, environment) identically every time they appear, so the Reel reads as one continuous world rather than six unrelated images.
 
 Return ONLY the structured data — no extra commentary.`;
+}
+
+
+export async function generateScenesWithGemini(params: {
+
+  topic: string;
+
+  description?: string;
+
+  targetDuration: number;
+
+}): Promise<{ title: string; scenes: SceneBlueprint[] }> {
+
+  const apiKey = process.env.GEMINI_API_KEY;
+
+  if (!apiKey) {
+
+    throw new Error('GEMINI_API_KEY is not configured');
+
+  }
+
+
+  const { topic, description = '', targetDuration } = params;
+  const sceneCount = 6;
+
+
+  const ai = new GoogleGenAI({
+    apiKey,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      },
+      // A hung request would otherwise block this job indefinitely; bounding
+      // it means a bad model attempt fails fast enough for the next
+      // candidate in the fallback list below to get a real chance.
+      timeout: 60_000,
+    },
+  });
+
+  // Filter out any discontinued/deprecated models (like 2.5, 2.0, 1.5)
+  const envModel = process.env.GEMINI_MODEL?.trim();
+  const isDeprecated = envModel && (
+    envModel.includes('2.5') ||
+    envModel.includes('2.0') ||
+    envModel.includes('1.5') ||
+    envModel.includes('gemini-pro')
+  );
+
+  // Preferred model order: gemini-3.6-flash, gemini-3.1-flash-lite, gemini-3.8-flash, gemini-flash-latest
+  const candidateModels: string[] = [
+    envModel && !isDeprecated ? envModel : 'gemini-3.6-flash',
+    'gemini-3.6-flash',
+    'gemini-3.1-flash-lite',
+    'gemini-3.8-flash',
+    'gemini-flash-latest',
+  ].filter((m, idx, arr) => arr.indexOf(m) === idx);
+
+  const prompt = buildScriptPrompt({ topic, description, targetDuration });
+
 
   let lastError: any = null;
   let rawText: string | undefined;
@@ -1535,7 +1556,7 @@ export async function generateSomaliScript(params: ScriptGenerationParams): Prom
 
   scenes: GeneratedSceneScript[];
 
-  scriptSource: 'gemini' | 'offline_template';
+  scriptSource: 'gemini' | 'openai' | 'offline_template';
 
   scriptFallbackReason?: string;
 
@@ -1562,6 +1583,8 @@ export async function generateSomaliScript(params: ScriptGenerationParams): Prom
   let blueprints: SceneBlueprint[] = [];
 
   let usedGeminiScript = false;
+
+  let usedOpenAiScript = false;
 
 
   // =========================================================================
@@ -1627,6 +1650,59 @@ export async function generateSomaliScript(params: ScriptGenerationParams): Prom
 
   // =========================================================================
 
+  // Case 1b: OpenAI writes the script when Gemini cannot. A script is the one
+
+  // thing with no acceptable fallback — the offline templates below are canned
+
+  // content about a fixed set of subjects, so a reel built from them is about
+
+  // the wrong topic entirely, which is far worse than a placeholder image.
+
+  // =========================================================================
+
+  if (blueprints.length === 0 && process.env.OPENAI_API_KEY?.trim()) {
+
+    try {
+
+      const openAiResult = await generateScenesWithOpenAI({
+
+        topic: cleanTopic,
+
+        description: brief,
+
+        targetDuration,
+
+      });
+
+      blueprints = openAiResult.scenes;
+
+      usedOpenAiScript = true;
+
+      aiGeneratedTitle = openAiResult.title;
+
+      scriptFallbackReason = undefined;
+
+      console.log(`[ScriptGenerator] Generated script via OpenAI (${blueprints.length} scenes) for topic: "${cleanTopic}"`);
+
+    } catch (err: any) {
+
+      const openAiReason = err?.message || 'OpenAI script generation failed';
+
+      console.warn(`[ScriptGenerator] OpenAI script generation also failed: ${openAiReason}`);
+
+      scriptFallbackReason = scriptFallbackReason
+
+        ? `${scriptFallbackReason} | OpenAI: ${openAiReason}`
+
+        : openAiReason;
+
+    }
+
+  }
+
+
+  // =========================================================================
+
   // Case 2: Domain-Aware Blueprint Generation (offline fallback)
 
   // =========================================================================
@@ -1681,7 +1757,15 @@ export async function generateSomaliScript(params: ScriptGenerationParams): Prom
   // A canned template script is not about the user's topic at all, so a
   // silent fallback ships a reel about the wrong subject. Report which
   // source produced this script, and why, so the app can say so plainly.
-  const scriptSource: 'gemini' | 'offline_template' = usedGeminiScript ? 'gemini' : 'offline_template';
+  const scriptSource: 'gemini' | 'openai' | 'offline_template' = usedGeminiScript
+
+    ? 'gemini'
+
+    : usedOpenAiScript
+
+    ? 'openai'
+
+    : 'offline_template';
 
   if (scriptSource === 'offline_template') {
 
