@@ -3,11 +3,15 @@ import path from 'path';
 import { GoogleGenAI, GenerateContentConfig } from '@google/genai';
 import { execAsync } from './execAsync.js';
 import { diagnoseOpenAIImage, generateOpenAIImageVisual, isOpenAIConfigured } from './openaiImageProvider.js';
+import { diagnosePexels, fetchPexelsSceneImage, isPexelsConfigured } from './pexelsImageProvider.js';
 
 export interface VisualAssetResult {
   assetPath: string;
   type: 'video' | 'image';
-  source: 'uploaded_flow' | 'bespoke_scene_visual' | 'matched_asset' | 'ai_generated_visual';
+  source: 'uploaded_flow' | 'bespoke_scene_visual' | 'matched_asset' | 'ai_generated_visual' | 'stock_photo';
+  // Photographer credit, set for stock photos so the app can show the
+  // attribution Pexels' API guidelines ask for.
+  attribution?: { photographer: string; photographerUrl: string; photoUrl: string };
   // Populated only when AI image generation was attempted and failed, so the
   // downgrade to the offline placeholder graphic is reported instead of
   // silently passing as if it were the intended cinematic visual.
@@ -236,6 +240,8 @@ const isBillingExhausted = (message: string) => BILLING_EXHAUSTED_ERROR.test(mes
 // instead of re-proving the same thing scene after scene.
 let imageGenerationBlockedUntil = 0;
 let imageGenerationBlockedReason = '';
+let openAiBlockedUntil = 0;
+let openAiBlockedReason = '';
 const BILLING_BLOCK_TTL_MS = 5 * 60 * 1000;
 
 // Bounds how long one scene may spend trying to get a real AI image before
@@ -341,12 +347,14 @@ export async function discoverImageCapableModels(apiKey: string, force = false):
  */
 export async function diagnoseImageGeneration(): Promise<Record<string, unknown>> {
   const openai = await diagnoseOpenAIImage();
+  const pexels = await diagnosePexels();
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     return {
       keyConfigured: false,
       openai,
+      pexels,
       verdict: openai.ok
         ? 'GEMINI_API_KEY is not set, but OpenAI image generation works — scenes will use OpenAI visuals.'
         : 'GEMINI_API_KEY is not set on this server, so every scene uses the offline placeholder graphic.',
@@ -406,6 +414,7 @@ export async function diagnoseImageGeneration(): Promise<Record<string, unknown>
 
   report.attempts = attempts;
   report.openai = openai;
+  report.pexels = pexels;
   const working = attempts.find((a) => a.ok);
   const textOk = (report.textGeneration as { ok?: boolean } | undefined)?.ok;
 
@@ -817,7 +826,6 @@ export async function generateBespokeSceneVisual(params: ResolveVisualParams): P
     subject = '',
     action = '',
     environment = '',
-    cameraComposition = '',
     visualKeywords = [],
     outputDir = '/tmp',
   } = params;
@@ -832,9 +840,20 @@ export async function generateBespokeSceneVisual(params: ResolveVisualParams): P
   const combinedContext = `${topic} ${caption} ${voiceover} ${subject} ${environment} ${visualKeywords.join(' ')}`;
   const theme = getTopicTheme(combinedContext);
 
-  const safeTopic = escapeXml((topic || 'XEERO AI').toUpperCase());
-  const safeCaption = escapeXml((caption || `MUUQAALKA ${sceneNumber}`).toUpperCase());
-  const messageLines = wrapText(keyMessage || voiceover.slice(0, 140), 34, 2).map(escapeXml);
+  // Capped at the width that clears the large scene number set in the
+  // opposite corner — an uncapped topic runs straight into it.
+  const topicLine = (topic || 'XEERO AI').toUpperCase();
+  const safeTopic = escapeXml(topicLine.length > 44 ? `${topicLine.slice(0, 43).trimEnd()}…` : topicLine);
+  // The caption is the headline and carries the layout, so it wraps wider and
+  // taller than the supporting message beneath it. Scene-number prefixes
+  // ("3. ") are stripped: the number is already set large in the corner, and
+  // repeating it in the headline reads as a bullet list rather than a title.
+  const headlineLines = wrapText(
+    (caption || `Muuqaalka ${sceneNumber}`).replace(/^\s*\d+\.\s*/, ''),
+    20,
+    3
+  ).map((line) => escapeXml(line.toUpperCase()));
+  const messageLines = wrapText(keyMessage || voiceover.slice(0, 140), 40, 2).map(escapeXml);
   // subject/action can land empty if the scene metadata didn't survive the
   // pipeline up to this point — visualKeywords is the more reliable signal
   // (always populated by the script generator), so prefer it for the kicker
@@ -842,9 +861,7 @@ export async function generateBespokeSceneVisual(params: ResolveVisualParams): P
   const keywordKicker = visualKeywords.length > 0 ? visualKeywords.slice(0, 3).join(' • ') : '';
   const safeSubject = escapeXml(subject || (keywordKicker ? '' : 'Habka Tignoolajiyada AI'));
   const safeAction = escapeXml(action || (keywordKicker ? keywordKicker : 'Falanqeynta xogta iyo horumarka'));
-  const safeEnv = escapeXml(environment || 'Xarunta Hal-abuurka');
   const kickerLine = safeSubject ? `${safeSubject} — ${safeAction}` : safeAction;
-  const safeCamera = escapeXml(cameraComposition || 'Dynamic 9:16 Cinematic Angle');
 
   // Scene-specific focal geometry according to scene sequence. Every branch
   // below unconditionally assigns this before it's read (if/else-if/else is
@@ -895,71 +912,67 @@ export async function generateBespokeSceneVisual(params: ResolveVisualParams): P
     `;
   }
 
+  // Editorial poster layout, not an icon on a gradient. Composed strictly for
+  // the band the finished video leaves visible: renderSceneVideo paints an
+  // opaque brand bar over the top 200px and a caption box from y=1150 down,
+  // so everything that must be read lives between y=240 and y=1100. The
+  // previous layout put its headline at y=1300, where the caption box would
+  // have covered it completely.
+  const SAFE_TOP = 240;
+  const SAFE_BOTTOM = 1100;
+  const headlineTop = SAFE_TOP + 300;
+
   const svgContent = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920">
   <defs>
-    <linearGradient id="bgGrad" x1="0" y1="0" x2="0.8" y2="1">
-      <stop offset="0%" stop-color="${theme.bgStart}" />
-      <stop offset="45%" stop-color="${theme.bgMid}" />
-      <stop offset="85%" stop-color="${theme.bgEnd}" />
-      <stop offset="100%" stop-color="#010408" />
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="0.6" y2="1">
+      <stop offset="0%" stop-color="${theme.bgMid}" />
+      <stop offset="55%" stop-color="${theme.bgStart}" />
+      <stop offset="100%" stop-color="#01040a" />
     </linearGradient>
-    <pattern id="grid" width="70" height="70" patternUnits="userSpaceOnUse">
-      <path d="M 70 0 L 0 0 0 70" fill="none" stroke="${theme.primary}" stroke-width="1" stroke-opacity="0.07" />
+    <linearGradient id="accentRule" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="${theme.primary}" />
+      <stop offset="100%" stop-color="${theme.primary}" stop-opacity="0" />
+    </linearGradient>
+    <pattern id="grid" width="90" height="90" patternUnits="userSpaceOnUse">
+      <path d="M 90 0 L 0 0 0 90" fill="none" stroke="${theme.primary}" stroke-width="1" stroke-opacity="0.05" />
     </pattern>
   </defs>
 
-  <!-- Background Base -->
   <rect width="1080" height="1920" fill="url(#bgGrad)" />
   <rect width="1080" height="1920" fill="url(#grid)" />
 
-  <!-- Ambient Glow -->
-  <circle cx="540" cy="620" r="420" fill="${theme.primary}" opacity="0.14" />
-  <circle cx="200" cy="1500" r="280" fill="${theme.secondary}" opacity="0.08" />
+  <!-- Off-centre glow gives the frame a light source instead of a flat wash -->
+  <circle cx="830" cy="560" r="470" fill="${theme.primary}" opacity="0.17" />
+  <circle cx="150" cy="1020" r="330" fill="${theme.secondary}" opacity="0.07" />
 
-  <!-- Top Studio Header & Badge -->
-  <rect x="70" y="80" width="940" height="76" rx="38" fill="#000000" fill-opacity="0.65" stroke="${theme.primary}" stroke-width="2" />
-  <text x="120" y="128" fill="${theme.primary}" font-size="24" font-family="system-ui, sans-serif" font-weight="900" letter-spacing="4">XEERO AI REEL STUDIO</text>
-  <rect x="760" y="94" width="220" height="48" rx="24" fill="${theme.primary}" />
-  <text x="870" y="127" fill="${theme.bgStart}" font-size="22" font-family="system-ui, sans-serif" font-weight="800" text-anchor="middle">SCENE ${sceneNumber} / ${totalScenes}</text>
-
-  <!-- Topic Subtitle Tag -->
-  <rect x="140" y="180" width="800" height="44" rx="22" fill="${theme.primary}" fill-opacity="0.15" stroke="${theme.primary}" stroke-width="1" />
-  <text x="540" y="210" fill="${theme.secondary}" font-size="18" font-family="system-ui, sans-serif" font-weight="700" text-anchor="middle" letter-spacing="3">${safeTopic}</text>
-
-  <!-- Central Visual Showcase Area -->
-  <g transform="translate(540, 680)">
+  <!-- Oversized glyph as a watermark behind the type, centred in the safe band -->
+  <g transform="translate(760, 700) scale(2.2)" opacity="0.14">
     ${focalGraphic}
   </g>
 
-  <!-- High-Impact Scene Title (Somali Headline) -->
-  <text x="540" y="1060" fill="${theme.lightText}" font-size="52" font-family="system-ui, sans-serif" font-weight="900" text-anchor="middle" letter-spacing="1">${safeCaption}</text>
+  <!-- Masthead, clear of the video's own top brand bar -->
+  <text x="80" y="${SAFE_TOP + 46}" fill="${theme.primary}" font-size="25" font-family="system-ui, sans-serif" font-weight="900" letter-spacing="8">XEERO AI</text>
+  <text x="80" y="${SAFE_TOP + 86}" fill="${theme.lightText}" font-size="19" font-family="system-ui, sans-serif" font-weight="600" letter-spacing="3" opacity="0.6">${safeTopic}</text>
+  <rect x="80" y="${SAFE_TOP + 112}" width="170" height="3" fill="url(#accentRule)" />
 
-  <!-- Editorial Caption Card: kicker line + key message, broadcast-caption style -->
-  <g transform="translate(70, 1130)">
-    <!-- Main Card Box -->
-    <rect width="940" height="380" rx="24" fill="#000000" fill-opacity="0.78" stroke="${theme.primary}" stroke-width="2" stroke-opacity="0.6" />
+  <!-- Scene number as a design element, kept clear of the topic line -->
+  <text x="1000" y="${SAFE_TOP + 96}" fill="${theme.primary}" font-size="130" font-family="system-ui, sans-serif" font-weight="900" text-anchor="end" opacity="0.3">${String(sceneNumber).padStart(2, '0')}</text>
 
-    <!-- Accent rule -->
-    <rect x="0" y="0" width="8" height="380" rx="4" fill="${theme.primary}" />
-
-    <!-- Kicker: what's on screen -->
-    <text x="44" y="58" fill="${theme.secondary}" font-size="21" font-family="system-ui, sans-serif" font-weight="800" letter-spacing="2">${kickerLine}</text>
-
-    <line x1="44" y1="86" x2="896" y2="86" stroke="${theme.primary}" stroke-width="1" stroke-opacity="0.3" />
-
-    <!-- Key message: the actual editorial caption, larger and readable -->
-    <text x="44" y="150" fill="${theme.lightText}" font-size="32" font-family="system-ui, sans-serif" font-weight="700">${messageLines
-      .map((line, i) => `<tspan x="44" dy="${i === 0 ? 0 : 42}">${line}</tspan>`)
+  <!-- Headline block, centred in the readable band -->
+  <g transform="translate(80, ${headlineTop})">
+    <rect x="0" y="-54" width="86" height="5" fill="${theme.primary}" />
+    <text x="0" y="24" fill="${theme.secondary}" font-size="21" font-family="system-ui, sans-serif" font-weight="800" letter-spacing="4">${kickerLine.slice(0, 44).toUpperCase()}</text>
+    <text x="0" y="108" fill="${theme.lightText}" font-size="60" font-family="system-ui, sans-serif" font-weight="900" letter-spacing="-1">${headlineLines
+      .map((line, i) => `<tspan x="0" dy="${i === 0 ? 0 : 72}">${line}</tspan>`)
       .join('')}</text>
-
-    <!-- Footer: setting tag, quiet and small -->
-    <text x="44" y="345" fill="${theme.primary}" font-size="18" font-family="system-ui, sans-serif" font-weight="600" letter-spacing="1">${safeEnv} • ${safeCamera}</text>
+    <text x="0" y="${136 + headlineLines.length * 72}" fill="${theme.lightText}" font-size="29" font-family="system-ui, sans-serif" font-weight="500" opacity="0.76">${messageLines
+      .map((line, i) => `<tspan x="0" dy="${i === 0 ? 0 : 40}">${line}</tspan>`)
+      .join('')}</text>
   </g>
 
-  <!-- Bottom Brand Footer -->
-  <rect x="240" y="1770" width="600" height="50" rx="25" fill="${theme.primary}" fill-opacity="0.15" stroke="${theme.primary}" stroke-width="1" />
-  <text x="540" y="1803" fill="${theme.primary}" font-size="22" font-family="system-ui, sans-serif" font-weight="800" text-anchor="middle" letter-spacing="4">BARO AI • AF-SOOMAALI • XEERO.AI</text>
+  <!-- Hairline marking the bottom of the safe band, above the caption box -->
+  <rect x="80" y="${SAFE_BOTTOM}" width="920" height="1" fill="${theme.primary}" opacity="0.25" />
 </svg>`;
 
   fs.writeFileSync(svgPath, svgContent, 'utf8');
@@ -1044,7 +1057,7 @@ export async function resolveSceneVisual(params: ResolveVisualParams): Promise<V
   // it is worth keeping for anyone whose Gemini balance is healthy.
   let aiFailureReason: string | undefined;
 
-  if (isOpenAIConfigured()) {
+  if (isOpenAIConfigured() && Date.now() >= openAiBlockedUntil) {
     try {
       console.log(`[VideoProvider] Generating Scene ${params.sceneNumber} visual via OpenAI (${params.caption || params.topic})...`);
       const openAiJpg = await generateOpenAIImageVisual(params);
@@ -1055,8 +1068,15 @@ export async function resolveSceneVisual(params: ResolveVisualParams): Promise<V
       };
     } catch (openAiErr: any) {
       aiFailureReason = openAiErr?.message || 'OpenAI image generation failed';
+      if (isBillingExhausted(aiFailureReason)) {
+        openAiBlockedUntil = Date.now() + BILLING_BLOCK_TTL_MS;
+        openAiBlockedReason = aiFailureReason;
+      }
       console.warn(`[VideoProvider] OpenAI image generation failed for Scene ${params.sceneNumber}: ${aiFailureReason}`);
     }
+  } else if (isOpenAIConfigured()) {
+    aiFailureReason = openAiBlockedReason;
+    console.warn(`[VideoProvider] Scene ${params.sceneNumber}: skipping OpenAI image (out of credit this render).`);
   }
 
   if (Date.now() < imageGenerationBlockedUntil) {
@@ -1080,6 +1100,37 @@ export async function resolveSceneVisual(params: ResolveVisualParams): Promise<V
   } else if (!aiFailureReason) {
     aiFailureReason = 'No image provider is configured (set OPENAI_API_KEY or GEMINI_API_KEY)';
     console.warn(`[VideoProvider] Scene ${params.sceneNumber}: ${aiFailureReason} — using offline placeholder graphic.`);
+  }
+
+  // Case 3c: Real stock photography. Free, so it runs whenever no AI provider
+  // could produce an image — a genuine photograph beats a drawn placeholder
+  // card for every scene that isn't hyper-specific.
+  if (isPexelsConfigured()) {
+    try {
+      const stock = await fetchPexelsSceneImage({
+        sceneNumber: params.sceneNumber,
+        topic: params.topic,
+        visualObjective: params.visualObjective,
+        visualKeywords: params.visualKeywords,
+        outputDir: params.outputDir,
+        usedAssets: params.usedAssets,
+      });
+      return {
+        assetPath: stock.jpgPath,
+        type: 'image',
+        source: 'stock_photo',
+        fallbackReason: aiFailureReason,
+        attribution: {
+          photographer: stock.photographer,
+          photographerUrl: stock.photographerUrl,
+          photoUrl: stock.photoUrl,
+        },
+      };
+    } catch (pexelsErr: any) {
+      const pexelsReason = pexelsErr?.message || 'Pexels lookup failed';
+      console.warn(`[VideoProvider] Pexels lookup failed for Scene ${params.sceneNumber}: ${pexelsReason}`);
+      aiFailureReason = aiFailureReason ? `${aiFailureReason} | Pexels: ${pexelsReason}` : pexelsReason;
+    }
   }
 
   // Case 4: Dynamic Bespoke Visual Generation (Explaining what this scene is actually saying)

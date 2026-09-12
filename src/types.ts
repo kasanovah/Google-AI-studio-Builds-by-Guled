@@ -128,8 +128,9 @@ export interface AssembledReelResult {
     sceneNumber: number;
     duration: number;
     caption: string;
-    visualSource?: 'uploaded_flow' | 'bespoke_scene_visual' | 'matched_asset' | 'ai_generated_visual';
+    visualSource?: 'uploaded_flow' | 'bespoke_scene_visual' | 'matched_asset' | 'ai_generated_visual' | 'stock_photo';
     visualNote?: string;
+    photoCredit?: string;
   }>;
   validation?: {
     isMp4: boolean;

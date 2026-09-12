@@ -226,6 +226,27 @@ export const MobileCreateWorkflow: React.FC<MobileCreateWorkflowProps> = ({
           <span>✓ REEL READY (1080x1920 • H.264 MP4)</span>
         </div>
 
+        {/* Photographer credit for stock photography. Pexels' API guidelines
+            ask for visible credit and a link back, so this shows whenever a
+            scene used a real photo rather than an AI-generated visual. */}
+        {(() => {
+          const credited = (assembledResult.assembledScenes || [])
+            .filter((s) => s.visualSource === 'stock_photo' && s.photoCredit)
+            .map((s) => s.photoCredit as string);
+          if (credited.length === 0) return null;
+          const unique = [...new Set(credited)];
+          return (
+            <div className="w-full max-w-sm py-2 px-4 rounded-2xl bg-slate-900/70 border border-slate-800 text-[11px] text-slate-400">
+              Sawirada:{' '}
+              <a href="https://www.pexels.com" target="_blank" rel="noreferrer" className="text-sky-400 underline">
+                Pexels
+              </a>{' '}
+              — {unique.slice(0, 3).join(', ')}
+              {unique.length > 3 ? ` +${unique.length - 3}` : ''}
+            </div>
+          );
+        })()}
+
         {/* Fallback-visual notice: tell the user plainly when a scene
             couldn't get a real AI image (e.g. Gemini quota/billing issue)
             and silently used the offline placeholder graphic instead,
