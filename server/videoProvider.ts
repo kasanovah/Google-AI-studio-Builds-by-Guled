@@ -409,10 +409,19 @@ export async function diagnoseImageGeneration(): Promise<Record<string, unknown>
   const working = attempts.find((a) => a.ok);
   const textOk = (report.textGeneration as { ok?: boolean } | undefined)?.ok;
 
-  if (working) {
-    report.verdict = `Image generation works with "${working.model}".`;
-  } else if (openai.ok) {
-    report.verdict = `Gemini image generation is unavailable, but OpenAI works (${openai.model}) — scenes will use OpenAI visuals instead of the placeholder graphic.`;
+  const openAiOutOfCredit = typeof openai.error === 'string' && /no credits remaining|insufficient_quota|exceeded your current quota|billing/i.test(openai.error);
+  const geminiOutOfCredit = attempts.some((a) => typeof a.error === 'string' && /credits are depleted|exceeded your current quota|billing/i.test(a.error));
+
+  if (openai.ok) {
+    report.verdict = `OpenAI image generation works (${openai.model}) — this is the provider scenes use first.`;
+  } else if (working) {
+    report.verdict = `Gemini image generation works with "${working.model}".`;
+  } else if (openAiOutOfCredit && geminiOutOfCredit) {
+    // Both providers billed out is the one case no code change can fix, so
+    // say exactly that rather than implying something is misconfigured.
+    report.verdict = 'Both providers are out of credit — OpenAI and Gemini each returned a billing error, so scripts fall back to the canned template and scenes to the placeholder graphic. Add credit to either account at platform.openai.com/settings/organization/billing or ai.studio/projects; no app change will help until then.';
+  } else if (openAiOutOfCredit) {
+    report.verdict = 'OpenAI is out of credit — add credit at platform.openai.com/settings/organization/billing.';
   } else if (!textOk) {
     report.verdict = 'Neither text nor image generation works with this key — the key itself is rejected or out of quota, so scripts fall back to the canned template and scenes to the placeholder graphic.';
   } else if (discovered.length === 0) {
