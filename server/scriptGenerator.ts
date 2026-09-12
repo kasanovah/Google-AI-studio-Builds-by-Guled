@@ -1609,58 +1609,23 @@ export async function generateSomaliScript(params: ScriptGenerationParams): Prom
 
   let scriptFallbackReason: string | undefined;
 
-  if (!process.env.GEMINI_API_KEY) {
+  // =========================================================================
 
-    scriptFallbackReason = 'GEMINI_API_KEY is not configured on the server';
+  // OpenAI writes the script first whenever it is configured: it is the
 
-  }
+  // provider this deployment funds, so leading with Gemini would spend a
 
-  if (process.env.GEMINI_API_KEY) {
+  // failed call before reaching it. Gemini runs when it is the only key set,
 
-    try {
+  // or as a backstop. The offline templates are the last resort only — they
 
-      const aiResult = await generateScenesWithGemini({
+  // are canned content about a fixed set of subjects, so a reel built from
 
-        topic: cleanTopic,
-
-        description: brief,
-
-        targetDuration,
-
-      });
-
-      blueprints = aiResult.scenes;
-
-      usedGeminiScript = true;
-
-      aiGeneratedTitle = aiResult.title;
-
-      console.log(`[ScriptGenerator] Generated script via Gemini (${blueprints.length} scenes) for topic: "${cleanTopic}"`);
-
-    } catch (err: any) {
-
-      scriptFallbackReason = err?.message || 'Gemini script generation failed';
-
-      console.warn(`[ScriptGenerator] Gemini generation failed, falling back to offline templates: ${scriptFallbackReason}`);
-
-    }
-
-  }
-
+  // them is about the wrong topic entirely.
 
   // =========================================================================
 
-  // Case 1b: OpenAI writes the script when Gemini cannot. A script is the one
-
-  // thing with no acceptable fallback — the offline templates below are canned
-
-  // content about a fixed set of subjects, so a reel built from them is about
-
-  // the wrong topic entirely, which is far worse than a placeholder image.
-
-  // =========================================================================
-
-  if (blueprints.length === 0 && process.env.OPENAI_API_KEY?.trim()) {
+  if (process.env.OPENAI_API_KEY?.trim()) {
 
     try {
 
@@ -1680,23 +1645,63 @@ export async function generateSomaliScript(params: ScriptGenerationParams): Prom
 
       aiGeneratedTitle = openAiResult.title;
 
-      scriptFallbackReason = undefined;
-
       console.log(`[ScriptGenerator] Generated script via OpenAI (${blueprints.length} scenes) for topic: "${cleanTopic}"`);
 
     } catch (err: any) {
 
-      const openAiReason = err?.message || 'OpenAI script generation failed';
+      scriptFallbackReason = err?.message || 'OpenAI script generation failed';
 
-      console.warn(`[ScriptGenerator] OpenAI script generation also failed: ${openAiReason}`);
+      console.warn(`[ScriptGenerator] OpenAI script generation failed: ${scriptFallbackReason}`);
+
+    }
+
+  }
+
+
+  if (blueprints.length === 0 && process.env.GEMINI_API_KEY) {
+
+    try {
+
+      const aiResult = await generateScenesWithGemini({
+
+        topic: cleanTopic,
+
+        description: brief,
+
+        targetDuration,
+
+      });
+
+      blueprints = aiResult.scenes;
+
+      usedGeminiScript = true;
+
+      aiGeneratedTitle = aiResult.title;
+
+      scriptFallbackReason = undefined;
+
+      console.log(`[ScriptGenerator] Generated script via Gemini (${blueprints.length} scenes) for topic: "${cleanTopic}"`);
+
+    } catch (err: any) {
+
+      const geminiReason = err?.message || 'Gemini script generation failed';
+
+      console.warn(`[ScriptGenerator] Gemini script generation failed: ${geminiReason}`);
 
       scriptFallbackReason = scriptFallbackReason
 
-        ? `${scriptFallbackReason} | OpenAI: ${openAiReason}`
+        ? `${scriptFallbackReason} | Gemini: ${geminiReason}`
 
-        : openAiReason;
+        : geminiReason;
 
     }
+
+  }
+
+
+  if (blueprints.length === 0 && !scriptFallbackReason) {
+
+    scriptFallbackReason = 'No AI script provider is configured (set OPENAI_API_KEY or GEMINI_API_KEY)';
 
   }
 

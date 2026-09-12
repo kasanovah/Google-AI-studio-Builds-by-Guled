@@ -1027,35 +1027,17 @@ export async function resolveSceneVisual(params: ResolveVisualParams): Promise<V
   // Only attempted when a Gemini key is configured; any failure (missing key,
   // model unavailable, quota/billing not enabled, network) falls through to
   // the guaranteed-to-work SVG bespoke visual below rather than breaking the reel.
+  // Case 3: Real AI image generation. OpenAI is tried first whenever it is
+  // configured: it is the provider this deployment actually funds, so leading
+  // with Gemini would spend a failed round trip per scene before reaching it.
+  // Gemini still runs when it is the only key present, or as a backstop, and
+  // renders 9:16 natively rather than needing the 2:3 crop OpenAI does — so
+  // it is worth keeping for anyone whose Gemini balance is healthy.
   let aiFailureReason: string | undefined;
-  if (Date.now() < imageGenerationBlockedUntil) {
-    aiFailureReason = imageGenerationBlockedReason;
-    console.warn(`[VideoProvider] Scene ${params.sceneNumber}: skipping AI image (Gemini billing/quota exhausted this render).`);
-  } else if (process.env.GEMINI_API_KEY) {
-    try {
-      console.log(`[VideoProvider] Attempting AI image generation for Scene ${params.sceneNumber} (${params.caption || params.topic})...`);
-      const aiJpg = await generateAIImageVisual(params);
-      return {
-        assetPath: aiJpg,
-        type: 'image',
-        source: 'ai_generated_visual',
-      };
-    } catch (aiErr: any) {
-      aiFailureReason = aiErr?.message || 'AI image generation failed';
-      console.warn(`[VideoProvider] AI image generation unavailable for Scene ${params.sceneNumber}, falling back to bespoke visual: ${aiFailureReason}`);
-    }
-  } else {
-    aiFailureReason = 'GEMINI_API_KEY is not configured on the server';
-    console.warn(`[VideoProvider] Scene ${params.sceneNumber}: ${aiFailureReason} — using offline placeholder graphic.`);
-  }
 
-  // Case 3b: OpenAI as the second image provider. Without this, a depleted
-  // Gemini balance turns every scene into the offline placeholder graphic;
-  // with it, the reel still gets real cinematic visuals from the other
-  // provider. Only runs when an OpenAI key is configured.
   if (isOpenAIConfigured()) {
     try {
-      console.log(`[VideoProvider] Falling back to OpenAI image generation for Scene ${params.sceneNumber}...`);
+      console.log(`[VideoProvider] Generating Scene ${params.sceneNumber} visual via OpenAI (${params.caption || params.topic})...`);
       const openAiJpg = await generateOpenAIImageVisual(params);
       return {
         assetPath: openAiJpg,
@@ -1063,12 +1045,32 @@ export async function resolveSceneVisual(params: ResolveVisualParams): Promise<V
         source: 'ai_generated_visual',
       };
     } catch (openAiErr: any) {
-      const openAiReason = openAiErr?.message || 'OpenAI image generation failed';
-      console.warn(`[VideoProvider] OpenAI image generation also failed for Scene ${params.sceneNumber}: ${openAiReason}`);
-      aiFailureReason = aiFailureReason
-        ? `${aiFailureReason} | OpenAI: ${openAiReason}`
-        : openAiReason;
+      aiFailureReason = openAiErr?.message || 'OpenAI image generation failed';
+      console.warn(`[VideoProvider] OpenAI image generation failed for Scene ${params.sceneNumber}: ${aiFailureReason}`);
     }
+  }
+
+  if (Date.now() < imageGenerationBlockedUntil) {
+    const blocked = imageGenerationBlockedReason;
+    aiFailureReason = aiFailureReason ? `${aiFailureReason} | Gemini: ${blocked}` : blocked;
+    console.warn(`[VideoProvider] Scene ${params.sceneNumber}: skipping Gemini image (billing/quota exhausted this render).`);
+  } else if (process.env.GEMINI_API_KEY) {
+    try {
+      console.log(`[VideoProvider] Attempting Gemini image generation for Scene ${params.sceneNumber}...`);
+      const aiJpg = await generateAIImageVisual(params);
+      return {
+        assetPath: aiJpg,
+        type: 'image',
+        source: 'ai_generated_visual',
+      };
+    } catch (aiErr: any) {
+      const geminiReason = aiErr?.message || 'Gemini image generation failed';
+      aiFailureReason = aiFailureReason ? `${aiFailureReason} | Gemini: ${geminiReason}` : geminiReason;
+      console.warn(`[VideoProvider] Gemini image generation unavailable for Scene ${params.sceneNumber}: ${geminiReason}`);
+    }
+  } else if (!aiFailureReason) {
+    aiFailureReason = 'No image provider is configured (set OPENAI_API_KEY or GEMINI_API_KEY)';
+    console.warn(`[VideoProvider] Scene ${params.sceneNumber}: ${aiFailureReason} — using offline placeholder graphic.`);
   }
 
   // Case 4: Dynamic Bespoke Visual Generation (Explaining what this scene is actually saying)
