@@ -182,7 +182,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div>
               <div className="text-xs font-bold text-white">Hubi Sawirada AI (Check AI visuals)</div>
               <div className="text-[11px] text-slate-400">
-                Tijaabi in sawirada Gemini si sax ah u shaqeynayaan
+                Tijaabi in sawirada AI-ga iyo Pexels si sax ah u shaqeynayaan
               </div>
             </div>
             <button

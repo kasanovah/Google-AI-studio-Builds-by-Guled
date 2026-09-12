@@ -248,7 +248,8 @@ export const MobileCreateWorkflow: React.FC<MobileCreateWorkflowProps> = ({
         })()}
 
         {/* Fallback-visual notice: tell the user plainly when a scene
-            couldn't get a real AI image (e.g. Gemini quota/billing issue)
+            couldn't get a real AI image or stock photo (e.g. an out-of-credit
+            account)
             and silently used the offline placeholder graphic instead,
             rather than letting it pass as if nothing went wrong. */}
         {(() => {
@@ -271,7 +272,7 @@ export const MobileCreateWorkflow: React.FC<MobileCreateWorkflowProps> = ({
                 </span>
                 {/credits are depleted|billing|exceeded your current quota/i.test(reason || '') && (
                   <span className="font-bold">
-                    Sababta: lacagta (credits) ee Gemini API waa dhammaatay — ku cusbooneysii ai.studio/projects.
+                    Sababta: lacagta (credits) ee OpenAI waa dhammaatay — ku cusbooneysii platform.openai.com.
                   </span>
                 )}
                 {reason && (
@@ -571,11 +572,11 @@ export const MobileCreateWorkflow: React.FC<MobileCreateWorkflowProps> = ({
                 </span>
                 {/credits are depleted|billing|exceeded your current quota/i.test(project.scriptFallbackReason || '') ? (
                   <span>
-                    Lacagta (credits) ee Gemini API waa dhammaatay. Fadlan ku cusbooneysii ai.studio/projects, ka dibna isku day mar kale.
+                    Lacagta (credits) ee OpenAI waa dhammaatay. Fadlan ku cusbooneysii platform.openai.com, ka dibna isku day mar kale.
                   </span>
                 ) : (
                   <span>
-                    Gemini lama gaari karin, markaa waxaa la isticmaalay qoraal guud oo horay loo diyaariyay. Ka hubi Settings → “Hubi Sawirada AI”.
+                    AI-ga lama gaari karin, markaa waxaa la isticmaalay qoraal guud oo horay loo diyaariyay. Ka hubi Settings → “Hubi Sawirada AI”.
                   </span>
                 )}
                 {project.scriptFallbackReason && (

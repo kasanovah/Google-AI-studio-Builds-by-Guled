@@ -16,7 +16,7 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 // same Express app, in both dev and prod), so no cross-origin requests are
 // ever legitimate here. A wide-open `Access-Control-Allow-Origin: *` would
 // let any website on the internet call these endpoints — including the
-// ones that invoke paid Gemini APIs and spawn ffmpeg — directly
+// ones that invoke paid AI APIs and spawn ffmpeg — directly
 // from a visitor's browser. Omitting CORS headers entirely means the
 // browser's default same-origin policy blocks any such cross-site call.
 app.use(express.json({ limit: '50mb' }));
@@ -75,11 +75,10 @@ app.get('/api/health', (_req: Request, res: Response) => {
   });
 });
 
-// Reports why scene visuals are or aren't real AI images: whether a Gemini
-// key is configured, which models it can actually see, and the verbatim error
-// from a live generation attempt against each candidate. Exists because a
-// failed image call is otherwise indistinguishable, from the outside, from a
-// reel that simply chose the offline placeholder graphic.
+// Reports why scene visuals are or aren't real images: which providers are
+// configured, and the verbatim error from a live attempt against each.
+// Exists because a failed image call is otherwise indistinguishable, from
+// the outside, from a reel that simply chose the offline placeholder card.
 app.get('/api/diagnose-visuals', requireFirebaseAuth(), rateLimit({ windowMs: 10 * 60 * 1000, max: 10 }), async (_req: Request, res: Response) => {
   try {
     const report = await diagnoseImageGeneration();
@@ -89,7 +88,7 @@ app.get('/api/diagnose-visuals', requireFirebaseAuth(), rateLimit({ windowMs: 10
   }
 });
 
-// Script generation endpoint (offline / deterministic, no Gemini)
+// Script generation endpoint
 app.post('/api/generate-script', requireFirebaseAuth(), rateLimit({ windowMs: 10 * 60 * 1000, max: 20 }), async (req: Request, res: Response) => {
   try {
     const { topic, description, targetDuration, pacing, tone, customScript } = req.body;

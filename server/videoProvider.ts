@@ -1,6 +1,5 @@
 import fs from 'fs';
 import path from 'path';
-import { GoogleGenAI, GenerateContentConfig } from '@google/genai';
 import { execAsync } from './execAsync.js';
 import { diagnoseOpenAIImage, generateOpenAIImageVisual, isOpenAIConfigured } from './openaiImageProvider.js';
 import { diagnosePexels, fetchPexelsSceneImage, isPexelsConfigured } from './pexelsImageProvider.js';
@@ -220,11 +219,6 @@ function wrapText(text: string, maxChars: number, maxLines: number): string[] {
   return lines;
 }
 
-// Errors worth retrying rather than immediately downgrading the scene to the
-// offline placeholder: six images are generated back to back per reel, which
-// trips per-minute rate limits easily, and model-overload/timeout responses
-// are routinely fine a few seconds later.
-const TRANSIENT_IMAGE_ERROR = /\b429\b|\b503\b|\b500\b|rate.?limit|quota|resource.?exhausted|overloaded|unavailable|deadline|timed? ?out|ETIMEDOUT|ECONNRESET|socket hang up/i;
 
 // A depleted balance is not a transient rate limit: it returns 429 too, but
 // retrying it, trying another model, or trying the next scene all fail
@@ -238,107 +232,17 @@ const isBillingExhausted = (message: string) => BILLING_EXHAUSTED_ERROR.test(mes
 // Set when a billing-exhausted error is seen, so the rest of the render (and
 // any render in the next few minutes) skips straight to the offline graphic
 // instead of re-proving the same thing scene after scene.
-let imageGenerationBlockedUntil = 0;
-let imageGenerationBlockedReason = '';
 let openAiBlockedUntil = 0;
 let openAiBlockedReason = '';
 const BILLING_BLOCK_TTL_MS = 5 * 60 * 1000;
 
-// Bounds how long one scene may spend trying to get a real AI image before
-// giving up and using the offline graphic, so a persistently failing model
-// can't stretch a six-scene reel into a multi-minute stall.
-const PER_SCENE_IMAGE_DEADLINE_MS = 210_000;
 
 // Last-resort model IDs, only used if asking the API for its real model list
 // fails. Names here can go stale at any time — discovery above is what keeps
 // this working.
-// Ordered cheapest-first on purpose. Six images are generated per reel, so
-// model choice dominates the cost of the whole product: Nano Banana
-// (2.5-flash-image) has a free-tier allowance and is plenty for a 1080x1920
-// frame, while the Pro image models are paid-only and several times dearer
-// per image. Pro is kept last as a fallback, not a default.
-const FALLBACK_IMAGE_MODELS = [
-  'gemini-2.5-flash-image', // Nano Banana — has a free tier, cheapest paid rate
-  'gemini-3.1-flash-lite-image', // Nano Banana 2 Lite
-  'gemini-3.1-flash-image', // Nano Banana 2
-  'gemini-3-pro-image', // Nano Banana Pro — paid only, last resort
-];
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function buildGenAI(apiKey: string, timeout: number) {
-  return new GoogleGenAI({
-    apiKey,
-    httpOptions: { headers: { 'User-Agent': 'aistudio-build' }, timeout },
-  });
-}
 
-// Hardcoded model IDs rot: Google renames and retires image models, and a
-// guessed name fails with a 404 that looks identical to "image generation is
-// broken". Asking the API which models this key can actually use, and which
-// of those generate images, keeps this working across renames instead of
-// silently degrading every scene to the offline placeholder graphic.
-let cachedImageModels: { models: string[]; at: number } | null = null;
-const MODEL_DISCOVERY_TTL_MS = 30 * 60 * 1000;
-
-export async function discoverImageCapableModels(apiKey: string, force = false): Promise<string[]> {
-  if (!force && cachedImageModels && Date.now() - cachedImageModels.at < MODEL_DISCOVERY_TTL_MS) {
-    return cachedImageModels.models;
-  }
-
-  const ai = buildGenAI(apiKey, 30_000);
-  const collected: Array<{ name: string; displayName: string; description: string; actions: string[] }> = [];
-
-  const pager = await ai.models.list();
-  let page = pager.page;
-  for (let guard = 0; guard < 10; guard++) {
-    for (const model of page) {
-      const name = (model.name || '').replace(/^models\//, '');
-      if (!name) continue;
-      collected.push({
-        name,
-        displayName: model.displayName || '',
-        description: model.description || '',
-        actions: model.supportedActions || [],
-      });
-    }
-    if (!pager.hasNextPage()) break;
-    page = await pager.nextPage();
-  }
-
-  // An image model is identified by its own advertised capabilities where
-  // available, and otherwise by the naming/description conventions Google
-  // uses for them ("...-image", "image generation", Imagen).
-  const imageModels = collected
-    .filter((m) => {
-      const haystack = `${m.name} ${m.displayName} ${m.description}`.toLowerCase();
-      const advertises = m.actions.some((a) => /image/i.test(a) && !/embed/i.test(a));
-      const namedLikeImageModel = /(^|[-_])image|imagen|image generation|nano.?banana/.test(haystack);
-      const isEmbeddingOrVision = /embed|aqa/.test(haystack);
-      return (advertises || namedLikeImageModel) && !isEmbeddingOrVision;
-    })
-    .map((m) => m.name);
-
-  // Prefer flash-class image models (fast and cheap enough to run six times
-  // per reel), then pro-class, then anything else; within each group prefer
-  // stable IDs over -preview/-exp ones.
-  // Cheapest-capable first: 2.5-flash-image (free tier available), then other
-  // flash-class models, then paid-only pro-class; stable IDs before
-  // preview/experimental ones within each group.
-  const isPreview = (m: string) => /preview|exp/.test(m);
-  const tier = (m: string) => {
-    if (/2\.5-flash-image/.test(m)) return 0;
-    if (/flash/.test(m)) return 1;
-    if (/pro/.test(m)) return 2;
-    return 3;
-  };
-  const rank = (m: string) => tier(m) * 2 + (isPreview(m) ? 1 : 0);
-  const ranked = [...new Set(imageModels)].sort((a, b) => rank(a) - rank(b));
-
-  console.log(`[VideoProvider] Model discovery: ${collected.length} models visible, ${ranked.length} image-capable: ${ranked.join(', ') || 'none'}`);
-  cachedImageModels = { models: ranked, at: Date.now() };
-  return ranked;
-}
 
 /**
  * Full picture of why scene visuals are or aren't being generated: whether a
@@ -349,327 +253,30 @@ export async function diagnoseImageGeneration(): Promise<Record<string, unknown>
   const openai = await diagnoseOpenAIImage();
   const pexels = await diagnosePexels();
 
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    return {
-      keyConfigured: false,
-      openai,
-      pexels,
-      verdict: openai.ok
-        ? 'GEMINI_API_KEY is not set, but OpenAI image generation works — scenes will use OpenAI visuals.'
-        : 'GEMINI_API_KEY is not set on this server, so every scene uses the offline placeholder graphic.',
-    };
-  }
+  const report: Record<string, unknown> = { openai, pexels };
 
-  const report: Record<string, unknown> = { keyConfigured: true, keyLength: apiKey.length };
-
-  // Text generation is checked first and separately: if it fails too, the
-  // problem is the key/quota itself rather than anything specific to image
-  // models, and the reel's script is silently falling back to the canned
-  // offline template as well.
-  try {
-    const ai = buildGenAI(apiKey, 30_000);
-    const textResponse = await ai.models.generateContent({
-      model: process.env.GEMINI_MODEL?.trim() || 'gemini-3.6-flash',
-      contents: 'Reply with the single word: OK',
-    });
-    report.textGeneration = { ok: !!textResponse.text?.trim(), sample: (textResponse.text || '').trim().slice(0, 40) };
-  } catch (err: any) {
-    report.textGeneration = { ok: false, error: (err?.message || String(err)).slice(0, 300) };
-  }
-
-  let discovered: string[] = [];
-  try {
-    discovered = await discoverImageCapableModels(apiKey, true);
-    report.imageCapableModels = discovered;
-  } catch (err: any) {
-    report.modelListError = err?.message || String(err);
-  }
-
-  const toTry = [...discovered, ...FALLBACK_IMAGE_MODELS].filter((m, i, arr) => arr.indexOf(m) === i).slice(0, 6);
-  const attempts: Array<Record<string, unknown>> = [];
-
-  for (const model of toTry) {
-    try {
-      const ai = buildGenAI(apiKey, 60_000);
-      const response = await ai.models.generateContent({
-        model,
-        contents: { parts: [{ text: 'A single ripe red apple on a plain wooden table, cinematic lighting, photorealistic.' }] },
-        config: { imageConfig: { aspectRatio: '9:16' } },
-      });
-      const hasImage = (response.candidates || []).some((c) =>
-        (c.content?.parts || []).some((p) => p.inlineData?.data)
-      );
-      attempts.push({
-        model,
-        ok: hasImage,
-        blockReason: response.promptFeedback?.blockReason,
-        finishReason: response.candidates?.[0]?.finishReason,
-      });
-      if (hasImage) break;
-    } catch (err: any) {
-      attempts.push({ model, ok: false, error: (err?.message || String(err)).slice(0, 300) });
-    }
-  }
-
-  report.attempts = attempts;
-  report.openai = openai;
-  report.pexels = pexels;
-  const working = attempts.find((a) => a.ok);
-  const textOk = (report.textGeneration as { ok?: boolean } | undefined)?.ok;
-
-  const openAiOutOfCredit = typeof openai.error === 'string' && /no credits remaining|insufficient_quota|exceeded your current quota|billing/i.test(openai.error);
-  const geminiOutOfCredit = attempts.some((a) => typeof a.error === 'string' && /credits are depleted|exceeded your current quota|billing/i.test(a.error));
+  const openAiOutOfCredit =
+    typeof openai.error === 'string' &&
+    /no credits remaining|insufficient_quota|exceeded your current quota|billing/i.test(openai.error);
 
   if (openai.ok) {
-    report.verdict = `OpenAI image generation works (${openai.model}) — this is the provider scenes use first.`;
-  } else if (working) {
-    report.verdict = `Gemini image generation works with "${working.model}".`;
-  } else if (openAiOutOfCredit && geminiOutOfCredit && pexels.ok) {
-    // Pexels covers the images for free, so only the script is actually
-    // degraded here — saying "placeholder graphic" would be wrong.
-    report.verdict = 'Both AI providers are out of credit, but Pexels is working — scenes will use real stock photography instead of the placeholder card. Only the script still falls back to the canned template, which needs credit at platform.openai.com/settings/organization/billing or ai.studio/projects.';
-  } else if (openAiOutOfCredit && geminiOutOfCredit) {
-    // Both providers billed out is the one case no code change can fix, so
-    // say exactly that rather than implying something is misconfigured.
-    report.verdict = 'Both providers are out of credit — OpenAI and Gemini each returned a billing error, so scripts fall back to the canned template and scenes to the placeholder graphic. Add credit to either account at platform.openai.com/settings/organization/billing or ai.studio/projects; no app change will help until then.';
+    report.verdict = `OpenAI image generation works (${openai.model}) — scenes will use bespoke AI visuals.`;
+  } else if (openAiOutOfCredit && pexels.ok) {
+    // Pexels covers the images for free, so only the script is degraded here.
+    report.verdict = 'OpenAI is out of credit, but Pexels is working — scenes will use real stock photography instead of the placeholder card. Only the script still falls back to the canned template, which needs credit at platform.openai.com/settings/organization/billing.';
   } else if (openAiOutOfCredit) {
-    report.verdict = 'OpenAI is out of credit — add credit at platform.openai.com/settings/organization/billing.';
-  } else if (!textOk) {
-    report.verdict = 'Neither text nor image generation works with this key — the key itself is rejected or out of quota, so scripts fall back to the canned template and scenes to the placeholder graphic.';
-  } else if (discovered.length === 0) {
-    report.verdict = 'Text generation works but this key can see no image-capable model — image generation is likely not enabled for this project (it usually requires billing enabled).';
+    report.verdict = 'OpenAI is out of credit and Pexels is unavailable, so scripts fall back to the canned template and scenes to the placeholder card. Add credit at platform.openai.com/settings/organization/billing, or set PEXELS_API_KEY for free stock photography.';
+  } else if (!openai.configured && pexels.ok) {
+    report.verdict = 'No OpenAI key is set, but Pexels is working — scenes will use real stock photography. Set OPENAI_API_KEY for bespoke AI visuals and real scripts.';
+  } else if (!openai.configured && !pexels.configured) {
+    report.verdict = 'No image provider is configured. Set OPENAI_API_KEY for AI visuals, or PEXELS_API_KEY for free stock photography.';
   } else {
-    report.verdict = 'Text works, image models are visible, but none produced an image — see attempts[] for the exact error from each.';
+    report.verdict = 'Image generation is unavailable — see the per-provider results below for the exact reason.';
   }
+
   return report;
 }
 
-/**
- * Generates a real AI image for a scene using its visualPrompt/flowPrompt
- * (written by the script generator as a still-image-generator prompt).
- *
- * Uses `generateContent` on image-capable Gemini models, explicitly asking
- * for IMAGE output and a 9:16 frame, and extracts the inline image data from
- * the response candidates.
- *
- * Each model is tried at a high-detail config first, then a baseline config
- * (in case a model rejects the richer options), retrying once on transient
- * errors. Only when every option is exhausted does it throw, letting the
- * caller fall back to the offline bespoke SVG visual.
- */
-export async function generateAIImageVisual(params: ResolveVisualParams): Promise<string> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error('GEMINI_API_KEY is not configured');
-  }
-
-  const {
-    sceneNumber,
-    topic = 'Xeero AI Reel',
-    visualPrompt = '',
-    flowPrompt = '',
-    subject = '',
-    action = '',
-    environment = '',
-    cameraComposition = '',
-    outputDir = '/tmp',
-  } = params;
-
-  const promptText = (visualPrompt || flowPrompt || `${subject} ${action} ${environment}`.trim() || topic).trim();
-  if (!promptText) {
-    throw new Error(`Scene ${sceneNumber}: No visual prompt available for AI image generation`);
-  }
-
-  // Direction is written as positive description of the wanted image. Listing
-  // unwanted artifacts ("no distorted anatomy", "no malformed objects")
-  // instead both biases image models toward the very thing being named and
-  // reads to safety classifiers as content the prompt is about — which
-  // returns a blocked, image-less response, and every scene then silently
-  // degrades to the offline placeholder graphic.
-  const fullPrompt = [
-    promptText,
-    cameraComposition ? `Shot: ${cameraComposition}.` : '',
-    'Premium cinematic editorial photography for a technology news brand: photorealistic, highly detailed, sharp focus, dramatic professional lighting, authentic real-world materials, natural proportions, rich depth of field.',
-    'Vertical 9:16 portrait composition with the subject clearly framed. Clean image with no lettering, captions, subtitles, logos or watermarks anywhere in the frame.',
-  ].filter(Boolean).join(' ');
-
-  if (!fs.existsSync(outputDir)) {
-    fs.mkdirSync(outputDir, { recursive: true });
-  }
-  const jpgPath = path.join(outputDir, `scene_${sceneNumber}_ai_visual.jpg`);
-
-  // Generous per-request bound: a slow but successful high-quality
-  // generation must never be cut off (that downgrades the scene to the
-  // placeholder graphic), while a genuinely hung request still can't stall
-  // the reel. Total time per scene is capped by PER_SCENE_IMAGE_DEADLINE_MS.
-  const ai = buildGenAI(apiKey, 120_000);
-
-  // Models this key can really use come first (asked once, then cached);
-  // an explicit override and the static list are only backstops. Previously
-  // this was a hardcoded guess at model IDs, so a single rename silently
-  // turned every scene into the offline placeholder.
-  let discoveredModels: string[] = [];
-  try {
-    discoveredModels = await discoverImageCapableModels(apiKey);
-  } catch (err: any) {
-    console.warn(`[VideoProvider] Could not list available models, using fallback IDs: ${err?.message || err}`);
-  }
-
-  const envModel = process.env.GEMINI_IMAGE_MODEL?.trim();
-  const candidateModels: string[] = [
-    ...(envModel ? [envModel] : []),
-    ...discoveredModels,
-    ...FALLBACK_IMAGE_MODELS,
-  ].filter((m, idx, arr): m is string => !!m && arr.indexOf(m) === idx).slice(0, 3);
-
-  if (candidateModels.length === 0) {
-    throw new Error(`Scene ${sceneNumber}: no image-capable Gemini model is available to this API key`);
-  }
-
-  // Config tiers, tried in order, each a strict step down from the last.
-  // responseModalities is kept for both of the first two: without asking for
-  // IMAGE output explicitly, an image-capable model can answer with text and
-  // the scene silently falls back to the placeholder graphic. Only the last
-  // tier drops it, for an endpoint that rejects the field outright.
-  const configVariants: Array<{ label: string; config: GenerateContentConfig }> = [
-    {
-      label: 'high-detail',
-      config: {
-        responseModalities: ['IMAGE'],
-        imageConfig: {
-          aspectRatio: '9:16',
-          // 1K, not 2K: the reel renders at 1080x1920, so a 2K frame is
-          // mostly thrown away by the downscale while costing noticeably
-          // more per image (and free-tier image allowances are 1K).
-          imageSize: '1K',
-          personGeneration: 'ALLOW_ADULT',
-        },
-      },
-    },
-    {
-      label: 'image-modality',
-      config: {
-        responseModalities: ['IMAGE'],
-        imageConfig: { aspectRatio: '9:16' },
-      },
-    },
-    {
-      label: 'baseline',
-      config: {
-        imageConfig: { aspectRatio: '9:16' },
-      },
-    },
-  ];
-
-  const deadline = Date.now() + PER_SCENE_IMAGE_DEADLINE_MS;
-  let lastError: any = null;
-  let billingFailures = 0;
-  let lastBillingMessage = '';
-
-  for (const model of candidateModels) {
-    modelLoop_variant:
-    for (const variant of configVariants) {
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        if (Date.now() > deadline) {
-          throw new Error(
-            `AI image generation for Scene ${sceneNumber} exceeded its ${Math.round(PER_SCENE_IMAGE_DEADLINE_MS / 1000)}s budget: ${lastError?.message || 'no successful model'}`
-          );
-        }
-
-        try {
-          const response = await ai.models.generateContent({
-            model,
-            contents: { parts: [{ text: fullPrompt }] },
-            config: variant.config,
-          });
-
-          const candidates = response.candidates || [];
-          let imageBytes: string | undefined;
-
-          for (const candidate of candidates) {
-            const parts = candidate.content?.parts || [];
-            for (const part of parts) {
-              if (part.inlineData?.data) {
-                imageBytes = part.inlineData.data;
-                break;
-              }
-            }
-            if (imageBytes) break;
-          }
-
-          if (!imageBytes) {
-            // Report *why* an image-less response came back — a safety block,
-            // a truncated generation and an empty candidate list are very
-            // different problems, and "no image bytes" alone hides which.
-            const blockReason = response.promptFeedback?.blockReason;
-            const finishReason = candidates[0]?.finishReason;
-            const detail = blockReason
-              ? `blocked: ${blockReason}${response.promptFeedback?.blockReasonMessage ? ` (${response.promptFeedback.blockReasonMessage})` : ''}`
-              : finishReason
-              ? `finishReason: ${finishReason}`
-              : candidates.length === 0
-              ? 'no candidates returned'
-              : 'candidates contained no inline image data';
-            throw new Error(`${model} returned no image — ${detail}`);
-          }
-
-          fs.writeFileSync(jpgPath, Buffer.from(imageBytes, 'base64'));
-
-          if (!fs.existsSync(jpgPath) || fs.statSync(jpgPath).size < 1000) {
-            throw new Error(`AI image for Scene ${sceneNumber} was written but appears invalid`);
-          }
-
-          console.log(
-            `[VideoProvider] Generated AI image for Scene ${sceneNumber} using ${model} (${variant.label}, ${Math.round(fs.statSync(jpgPath).size / 1024)}KB)`
-          );
-          return jpgPath;
-        } catch (err: any) {
-          lastError = err;
-          const message = err?.message || String(err);
-
-          // A depleted balance is an account-level problem, so retrying this
-          // model or trying its other config tiers cannot help. Move to the
-          // next model though rather than giving up outright: models differ
-          // in free-tier availability, so a cheaper one may still answer on
-          // free quota when the paid-only ones cannot.
-          if (isBillingExhausted(message)) {
-            billingFailures += 1;
-            lastBillingMessage = message.slice(0, 300);
-            console.warn(`[VideoProvider] Scene ${sceneNumber}: ${model} rejected for billing/quota — trying next model.`);
-            break modelLoop_variant;
-          }
-
-          const transient = TRANSIENT_IMAGE_ERROR.test(message);
-          console.warn(
-            `[VideoProvider] Scene ${sceneNumber} image attempt failed [${model} / ${variant.label} / try ${attempt}]${transient ? ' (transient)' : ''}: ${message}`
-          );
-
-          // Retry the same model/config once for transient failures (rate
-          // limits especially — six scenes generate back to back), otherwise
-          // move straight on to the next configuration.
-          if (transient && attempt === 1 && Date.now() + 6_000 < deadline) {
-            await sleep(5_000);
-            continue;
-          }
-          break;
-        }
-      }
-    }
-  }
-
-  // Only when every candidate model was rejected for billing is this an
-  // account-level dead end worth short-circuiting for the remaining scenes;
-  // a mix of failures could still mean another model would have worked.
-  if (billingFailures >= candidateModels.length) {
-    imageGenerationBlockedUntil = Date.now() + BILLING_BLOCK_TTL_MS;
-    imageGenerationBlockedReason = lastBillingMessage;
-    console.error(`[VideoProvider] Every image model rejected for billing/quota — skipping AI images for the rest of this render: ${lastBillingMessage}`);
-    throw new Error(`Gemini image generation unavailable: ${lastBillingMessage}`);
-  }
-
-  throw new Error(`All AI image models failed for Scene ${sceneNumber}: ${lastError?.message || 'unknown error'}`);
-}
 
 /**
  * Dynamically generates a scene-specific visual graphic (1080x1920, 9:16)
@@ -1049,16 +656,10 @@ export async function resolveSceneVisual(params: ResolveVisualParams): Promise<V
     }
   }
 
-  // Case 3: Real AI-generated image, using the scene's own visualPrompt/flowPrompt.
-  // Only attempted when a Gemini key is configured; any failure (missing key,
-  // model unavailable, quota/billing not enabled, network) falls through to
-  // the guaranteed-to-work SVG bespoke visual below rather than breaking the reel.
-  // Case 3: Real AI image generation. OpenAI is tried first whenever it is
-  // configured: it is the provider this deployment actually funds, so leading
-  // with Gemini would spend a failed round trip per scene before reaching it.
-  // Gemini still runs when it is the only key present, or as a backstop, and
-  // renders 9:16 natively rather than needing the 2:3 crop OpenAI does — so
-  // it is worth keeping for anyone whose Gemini balance is healthy.
+  // Case 3: Bespoke AI imagery from the scene's own visualPrompt. Any failure
+  // (no key, out of credit, model unavailable, network) falls through to the
+  // free stock photography below, and only then to the offline card, so a
+  // reel is never broken by an unavailable provider.
   let aiFailureReason: string | undefined;
 
   if (isOpenAIConfigured() && Date.now() >= openAiBlockedUntil) {
@@ -1083,27 +684,9 @@ export async function resolveSceneVisual(params: ResolveVisualParams): Promise<V
     console.warn(`[VideoProvider] Scene ${params.sceneNumber}: skipping OpenAI image (out of credit this render).`);
   }
 
-  if (Date.now() < imageGenerationBlockedUntil) {
-    const blocked = imageGenerationBlockedReason;
-    aiFailureReason = aiFailureReason ? `${aiFailureReason} | Gemini: ${blocked}` : blocked;
-    console.warn(`[VideoProvider] Scene ${params.sceneNumber}: skipping Gemini image (billing/quota exhausted this render).`);
-  } else if (process.env.GEMINI_API_KEY) {
-    try {
-      console.log(`[VideoProvider] Attempting Gemini image generation for Scene ${params.sceneNumber}...`);
-      const aiJpg = await generateAIImageVisual(params);
-      return {
-        assetPath: aiJpg,
-        type: 'image',
-        source: 'ai_generated_visual',
-      };
-    } catch (aiErr: any) {
-      const geminiReason = aiErr?.message || 'Gemini image generation failed';
-      aiFailureReason = aiFailureReason ? `${aiFailureReason} | Gemini: ${geminiReason}` : geminiReason;
-      console.warn(`[VideoProvider] Gemini image generation unavailable for Scene ${params.sceneNumber}: ${geminiReason}`);
-    }
-  } else if (!aiFailureReason) {
-    aiFailureReason = 'No image provider is configured (set OPENAI_API_KEY or GEMINI_API_KEY)';
-    console.warn(`[VideoProvider] Scene ${params.sceneNumber}: ${aiFailureReason} — using offline placeholder graphic.`);
+  if (!isOpenAIConfigured() && !aiFailureReason) {
+    aiFailureReason = 'No AI image provider is configured (set OPENAI_API_KEY)';
+    console.warn(`[VideoProvider] Scene ${params.sceneNumber}: ${aiFailureReason}.`);
   }
 
   // Case 3c: Real stock photography. Free, so it runs whenever no AI provider

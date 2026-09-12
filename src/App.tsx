@@ -53,7 +53,7 @@ export function App() {
       .catch(() => setBackendOnline(false));
   }, []);
 
-  // Generate Script & Initialize Reel via Backend (Offline / Deterministic, no Gemini)
+  // Generate Script & Initialize Reel via Backend
   const handleGenerateScript = async (autoAssemble = true) => {
     const rawTopic = (project.topic || '').trim();
     const rawDesc = (project.description || '').trim();

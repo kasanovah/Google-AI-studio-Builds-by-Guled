@@ -13,7 +13,7 @@ const FALLBACK_OPENAI_TEXT_MODELS = [
 
 const SCENE_COUNT = 6;
 
-// Mirrors GEMINI_SCRIPT_SCHEMA. OpenAI structured outputs require every
+// OpenAI structured outputs require every
 // property to be listed in `required` and additionalProperties:false, so the
 // model cannot quietly omit a field the render pipeline depends on.
 const OPENAI_SCRIPT_SCHEMA = {
@@ -94,8 +94,7 @@ async function requestScript(model: string, prompt: string, apiKey: string): Pro
 }
 
 /**
- * Writes the reel script through OpenAI, returning the same shape as the
- * Gemini generator so the rest of the pipeline cannot tell them apart.
+ * Writes the reel script through OpenAI.
  *
  * Exists because a script is the one thing with no acceptable fallback: the
  * offline templates are canned content about a fixed set of subjects, so a

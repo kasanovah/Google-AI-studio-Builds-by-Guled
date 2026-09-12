@@ -5,13 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --outfile=dist/server.cjs --external:express --external:cors --external:@google/genai",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --outfile=dist/server.cjs --external:express --external:cors",
     "start": "node dist/server.cjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint ."
   },
   "dependencies": {
-    "@google/genai": "^2.21.0",
     "@tailwindcss/vite": "^4.0.0",
     "cors": "^2.8.5",
     "express": "^4.19.2",

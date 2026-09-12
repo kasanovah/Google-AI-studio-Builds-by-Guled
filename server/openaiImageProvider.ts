@@ -91,12 +91,11 @@ function buildPrompt(promptText: string, cameraComposition?: string): string {
 }
 
 /**
- * Generates a scene visual through OpenAI and returns a 1080x1920 JPG, ready
- * for the same render path as a Gemini-generated image.
+ * Generates a scene visual through OpenAI and returns a 1080x1920 JPG,
+ * ready for the same render path as every other visual source.
  *
- * Used as the second provider: when Gemini is out of credit every scene would
- * otherwise drop to the offline placeholder graphic, which looks nothing like
- * the cinematic visuals the reel is supposed to have.
+ * This is the bespoke visual tier: when it is unavailable a scene falls back
+ * to free stock photography, and only then to the offline poster card.
  */
 export async function generateOpenAIImageVisual(params: {
   sceneNumber: number;

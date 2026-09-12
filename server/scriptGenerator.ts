@@ -1,4 +1,3 @@
-import { GoogleGenAI, Type } from '@google/genai';
 import { generateScenesWithOpenAI } from './openaiScriptProvider.js';
 
 
@@ -1142,349 +1141,15 @@ export function generateDomainBlueprints(domain: TopicDomain, _cleanTopic: strin
 }
 
 
-/**
 
- * Structured JSON schema Gemini must follow. Mirrors SceneBlueprint exactly so
 
- * the response can be dropped straight into GeneratedSceneScript with zero
 
- * post-processing guesswork.
 
- */
-
-const GEMINI_SCRIPT_SCHEMA = {
-
-  type: Type.OBJECT,
-
-  properties: {
-
-    title: {
-
-      type: Type.STRING,
-
-      description: 'Short, scroll-stopping Somali title for the reel (max ~8 words).',
-
-    },
-
-    scenes: {
-
-      type: Type.ARRAY,
-
-      minItems: '6',
-
-      maxItems: '6',
-
-      items: {
-
-        type: Type.OBJECT,
-
-        properties: {
-
-          voiceover: { type: Type.STRING, description: 'Natural spoken Somali narration for this scene, one or two sentences.' },
-
-          caption: { type: Type.STRING, description: 'Short on-screen Somali caption/headline for this scene, prefixed with its scene number for scenes 1-5 (e.g. "1. ..."), and exactly "Ku Xirnow Xeero AI!" for the final scene.' },
-
-          keyMessage: { type: Type.STRING, description: 'One-sentence Somali summary of this scene\'s core point.' },
-
-          visualObjective: { type: Type.STRING, description: 'English description of what the visual should communicate.' },
-
-          subject: { type: Type.STRING, description: 'Somali description of the main visual subject.' },
-
-          action: { type: Type.STRING, description: 'Somali description of what is happening/moving in the shot.' },
-
-          environment: { type: Type.STRING, description: 'Somali description of the setting/location.' },
-
-          cameraComposition: { type: Type.STRING, description: 'English camera/shot description (e.g. "Macro ground-level POV with dramatic rim lighting").' },
-
-          visualPrompt: { type: Type.STRING, description: 'English cinematic image-generation prompt for a 9:16 still, matching the scene.' },
-
-          flowPrompt: { type: Type.STRING, description: 'English 9:16 24fps video-generation prompt for this scene, in the style "Vertical 9:16 cinematic ... , 24fps".' },
-
-          visualKeywords: {
-
-            type: Type.ARRAY,
-
-            items: { type: Type.STRING },
-
-            minItems: '2',
-
-            maxItems: '4',
-
-            description: 'Short English tag words for this scene\'s visual.',
-
-          },
-
-        },
-
-        required: [
-
-          'voiceover', 'caption', 'keyMessage', 'visualObjective', 'subject',
-
-          'action', 'environment', 'cameraComposition', 'visualPrompt', 'flowPrompt', 'visualKeywords',
-
-        ],
-
-      },
-
-    },
-
-  },
-
-  required: ['title', 'scenes'],
-
-};
-
-
-/**
-
- * Real AI script generation via the Gemini API.
-
- *
-
- * Produces a genuinely dynamic 6-scene Somali script for ANY topic (not limited
-
- * to the fixed template domains below). Requires GEMINI_API_KEY to be set;
-
- * throws on any failure so the caller can fall back to the offline templates
-
- * rather than ever serving a broken/empty script.
-
- */
-
-/**
- * The single source of truth for how a Xeero AI reel script is written.
- *
- * Shared by every script provider so that switching provider never silently
- * changes the editorial rules — above all the separation between production
- * instructions (which the AI interprets) and the voiceover (which Ubax reads
- * aloud, and which must never contain those instructions).
- */
-export function buildScriptPrompt(params: {
-  topic: string;
-  description?: string;
-  targetDuration: number;
-}): string {
-  const { topic, description = '', targetDuration } = params;
-  const hasBrief = description.trim().length > 0;
-  const sceneCount = 6;
-  const approxWordsPerScene = Math.max(8, Math.round(((targetDuration / sceneCount) * 2.6)));
-
-  return `You are the senior scriptwriter for Xeero AI, a Somali-language AI/technology media brand. Write a complete 6-scene vertical (9:16) Reel script explaining the following topic to a Somali-speaking audience in Somalia and worldwide.
-
-TOPIC: "${topic}"
-${hasBrief ? `
-USER BRIEF (production instructions — read carefully):
-"""
-${description}
-"""
-
-CRITICAL — this brief is PRODUCTION INSTRUCTIONS FOR YOU, THE SCRIPTWRITER. It is NOT narration and must NEVER be read aloud by the voice actor (Ubax).
-- The brief may be written in Somali, English, or a mix of both. Understand it fully regardless of language.
-- It may contain directives about pacing, structure, hook style, what to include/exclude (e.g. "no intro", "start immediately with the result", "sync every scene tightly to the narration", a specific duration), tone, or subject matter.
-- APPLY every directive you find to how you structure and write the script.
-- The "voiceover" field of every scene must contain ONLY natural spoken Somali narration about the TOPIC itself — never any part of the brief's wording, never meta-commentary about the video, never phrases that describe what the video should do (e.g. never say things like "samee", "isticmaal", "ha isticmaalin", "scene-ka", "caption-ka", "muuqaalka ha noqdo", "bilow si xoog leh" as instructions spoken to the viewer). If a directive can't be expressed as natural content, just follow it silently in how the script is built — do not mention it.
-- Do not translate the brief into narration. Do not append the brief (or any part of it) to the voiceover. Do not have the voiceover "acknowledge" or "explain" the instructions.
-` : ''}
-TARGET TOTAL DURATION: ${targetDuration} seconds across exactly 6 scenes (~${Math.round(targetDuration / sceneCount)}s each).
-
-STRICT SOMALI LANGUAGE RULES:
-- Write "voiceover", "caption", "keyMessage", "subject", "action", and "environment" fields in natural, fluent, professional Somali. Never machine-translated or awkward phrasing. No calques.
-- Do not reach for an English word when a natural, commonly understood Somali word exists — translate it. Only keep a term in English when Somali speakers genuinely use that English word in everyday speech and no natural Somali equivalent exists (e.g. "AI", "app", "internet", "email"). When in doubt, prefer the Somali word.
-- Company and product names (e.g. Google, OpenAI, Nvidia) take FEMININE grammatical agreement in Somali (waxay/ay/-tay), never masculine (wuxuu/uu/-ay).
-- Each scene's voiceover should be roughly ${approxWordsPerScene} words — enough to comfortably fill ~${Math.round(targetDuration / sceneCount)} seconds of natural spoken pacing (about 2-3 words per second), not more.
-
-STRUCTURE (exactly 6 scenes, in order):
-1. Hook — state the problem or surprising fact that makes someone stop scrolling in the first 2-3 seconds. Never open with a generic greeting or announcement like "Asc dhammaan", "Maanta waxaan ka hadlaynaa...", or "Ku soo dhawaada..." — lead with the curiosity or value itself, e.g. the style of "AI-kan wuxuu kuu qaban karaa shaqo aad saacado ku qaadan lahayd."${hasBrief ? ' If the brief above asks for something specific here (e.g. no separate intro, open immediately on a result, a particular hook angle), follow it exactly — but express it purely as content, never as a spoken instruction.' : ''}
-2-5. Explanation — build the idea step by step with concrete, specific detail (not vague generalities). Each scene must be visually and narratively distinct from the others — no repeated concepts.
-6. Outro/CTA — close with an inspiring one-line takeaway, and set caption to exactly "Ku Xirnow Xeero AI!" (voiceover can vary but should invite the viewer to follow Xeero AI).
-
-VISUAL FIELDS (English):
-- "visualObjective", "cameraComposition", "visualPrompt", "flowPrompt", and "visualKeywords" must be written in English, describing a premium, cinematic, Bloomberg/Reuters-editorial-style 9:16 visual specific to that exact scene's content — never generic stock-photo description.
-- "visualPrompt" is for a still image generator; "flowPrompt" is for a video generator and must start with "Vertical 9:16 cinematic" and end with "24fps".
-- If the same person, product, or setting reasonably recurs across multiple scenes, describe their visual details (appearance, clothing, environment) identically every time they appear, so the Reel reads as one continuous world rather than six unrelated images.
-
-Return ONLY the structured data — no extra commentary.`;
-}
-
-
-export async function generateScenesWithGemini(params: {
-
-  topic: string;
-
-  description?: string;
-
-  targetDuration: number;
-
-}): Promise<{ title: string; scenes: SceneBlueprint[] }> {
-
-  const apiKey = process.env.GEMINI_API_KEY;
-
-  if (!apiKey) {
-
-    throw new Error('GEMINI_API_KEY is not configured');
-
-  }
-
-
-  const { topic, description = '', targetDuration } = params;
-  const sceneCount = 6;
-
-
-  const ai = new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      },
-      // A hung request would otherwise block this job indefinitely; bounding
-      // it means a bad model attempt fails fast enough for the next
-      // candidate in the fallback list below to get a real chance.
-      timeout: 60_000,
-    },
-  });
-
-  // Filter out any discontinued/deprecated models (like 2.5, 2.0, 1.5)
-  const envModel = process.env.GEMINI_MODEL?.trim();
-  const isDeprecated = envModel && (
-    envModel.includes('2.5') ||
-    envModel.includes('2.0') ||
-    envModel.includes('1.5') ||
-    envModel.includes('gemini-pro')
-  );
-
-  // Preferred model order: gemini-3.6-flash, gemini-3.1-flash-lite, gemini-3.8-flash, gemini-flash-latest
-  const candidateModels: string[] = [
-    envModel && !isDeprecated ? envModel : 'gemini-3.6-flash',
-    'gemini-3.6-flash',
-    'gemini-3.1-flash-lite',
-    'gemini-3.8-flash',
-    'gemini-flash-latest',
-  ].filter((m, idx, arr) => arr.indexOf(m) === idx);
-
-  const prompt = buildScriptPrompt({ topic, description, targetDuration });
-
-
-  let lastError: any = null;
-  let rawText: string | undefined;
-
-  for (const model of candidateModels) {
-    try {
-      const response = await ai.models.generateContent({
-        model,
-        contents: prompt,
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: GEMINI_SCRIPT_SCHEMA,
-          temperature: 0.9,
-        },
-      });
-
-      const text = response.text;
-      if (text && text.trim()) {
-        rawText = text;
-        console.log(`[ScriptGenerator] Successfully generated script using model: ${model}`);
-        break;
-      }
-    } catch (err: any) {
-      lastError = err;
-      const message = err?.message || String(err);
-      // Billing rejections still fall through to the next model rather than
-      // aborting: models differ in free-tier availability, so a Flash model
-      // can still answer on free quota when a paid-only one will not.
-      if (/prepayment credits are depleted|billing|exceeded your current quota/i.test(message)) {
-        console.warn(`[ScriptGenerator] "${model}" rejected for billing/quota — trying next model.`);
-      } else {
-        console.warn(`[ScriptGenerator] Attempt with model "${model}" failed (${message}). Trying fallback model...`);
-      }
-    }
-  }
-
-  if (!rawText || !rawText.trim()) {
-    throw new Error(lastError?.message || 'Gemini returned an empty response');
-  }
-
-
-  let parsed: { title?: string; scenes?: any[] };
-
-  try {
-
-    parsed = JSON.parse(rawText);
-
-  } catch (err: any) {
-
-    throw new Error(`Gemini returned invalid JSON: ${err?.message}`, { cause: err });
-
-  }
-
-
-  if (!parsed.scenes || !Array.isArray(parsed.scenes) || parsed.scenes.length !== sceneCount) {
-
-    throw new Error(`Gemini returned ${parsed.scenes?.length ?? 0} scenes, expected ${sceneCount}`);
-
-  }
-
-
-  const blueprints: SceneBlueprint[] = parsed.scenes.map((s: any, idx: number) => {
-
-    const required = ['voiceover', 'caption', 'keyMessage', 'visualObjective', 'subject', 'action', 'environment', 'cameraComposition', 'visualPrompt', 'flowPrompt'];
-
-    for (const field of required) {
-
-      if (!s[field] || typeof s[field] !== 'string' || !s[field].trim()) {
-
-        throw new Error(`Gemini scene ${idx + 1} is missing required field "${field}"`);
-
-      }
-
-    }
-
-    return {
-
-      voiceover: s.voiceover.trim(),
-
-      caption: s.caption.trim(),
-
-      keyMessage: s.keyMessage.trim(),
-
-      visualObjective: s.visualObjective.trim(),
-
-      subject: s.subject.trim(),
-
-      action: s.action.trim(),
-
-      environment: s.environment.trim(),
-
-      cameraComposition: s.cameraComposition.trim(),
-
-      visualPrompt: s.visualPrompt.trim(),
-
-      flowPrompt: s.flowPrompt.trim(),
-
-      visualKeywords: Array.isArray(s.visualKeywords) && s.visualKeywords.length > 0
-
-        ? s.visualKeywords.map((k: any) => String(k))
-
-        : ['xeero ai', topic.slice(0, 15), `scene ${idx + 1}`],
-
-    };
-
-  });
-
-
-  return {
-
-    title: (parsed.title || topic || 'Xeero AI Reel').trim(),
-
-    scenes: blueprints,
-
-  };
-
-}
 
 
 // Sentence-level signatures of a PRODUCTION INSTRUCTION rather than spoken
 // narration content. This is a last-resort safety net on top of the
-// prompt-level instruction/narration separation in generateScenesWithGemini
+// prompt-level instruction/narration separation in buildScriptPrompt
 // above — it should rarely trigger, but if a directive from the user's brief
 // ever leaks into a generated "voiceover" field, this strips that sentence
 // before it can reach the TTS engine.
@@ -1539,6 +1204,62 @@ function sanitizeVoiceoverText(rawVoiceover: string, fallback?: string): string 
 }
 
 /**
+ * The single source of truth for how a Xeero AI reel script is written.
+ *
+ * Kept separate from any one provider so the editorial rules — above all the
+ * separation between production instructions (which the AI interprets) and
+ * the voiceover (which Ubax reads aloud, and which must never contain those
+ * instructions) — cannot drift if another provider is added later.
+ */
+export function buildScriptPrompt(params: {
+  topic: string;
+  description?: string;
+  targetDuration: number;
+}): string {
+  const { topic, description = '', targetDuration } = params;
+  const hasBrief = description.trim().length > 0;
+  const sceneCount = 6;
+  const approxWordsPerScene = Math.max(8, Math.round(((targetDuration / sceneCount) * 2.6)));
+
+  return `You are the senior scriptwriter for Xeero AI, a Somali-language AI/technology media brand. Write a complete 6-scene vertical (9:16) Reel script explaining the following topic to a Somali-speaking audience in Somalia and worldwide.
+
+TOPIC: "${topic}"
+${hasBrief ? `
+USER BRIEF (production instructions — read carefully):
+"""
+${description}
+"""
+
+CRITICAL — this brief is PRODUCTION INSTRUCTIONS FOR YOU, THE SCRIPTWRITER. It is NOT narration and must NEVER be read aloud by the voice actor (Ubax).
+- The brief may be written in Somali, English, or a mix of both. Understand it fully regardless of language.
+- It may contain directives about pacing, structure, hook style, what to include/exclude (e.g. "no intro", "start immediately with the result", "sync every scene tightly to the narration", a specific duration), tone, or subject matter.
+- APPLY every directive you find to how you structure and write the script.
+- The "voiceover" field of every scene must contain ONLY natural spoken Somali narration about the TOPIC itself — never any part of the brief's wording, never meta-commentary about the video, never phrases that describe what the video should do (e.g. never say things like "samee", "isticmaal", "ha isticmaalin", "scene-ka", "caption-ka", "muuqaalka ha noqdo", "bilow si xoog leh" as instructions spoken to the viewer). If a directive can't be expressed as natural content, just follow it silently in how the script is built — do not mention it.
+- Do not translate the brief into narration. Do not append the brief (or any part of it) to the voiceover. Do not have the voiceover "acknowledge" or "explain" the instructions.
+` : ''}
+TARGET TOTAL DURATION: ${targetDuration} seconds across exactly 6 scenes (~${Math.round(targetDuration / sceneCount)}s each).
+
+STRICT SOMALI LANGUAGE RULES:
+- Write "voiceover", "caption", "keyMessage", "subject", "action", and "environment" fields in natural, fluent, professional Somali. Never machine-translated or awkward phrasing. No calques.
+- Do not reach for an English word when a natural, commonly understood Somali word exists — translate it. Only keep a term in English when Somali speakers genuinely use that English word in everyday speech and no natural Somali equivalent exists (e.g. "AI", "app", "internet", "email"). When in doubt, prefer the Somali word.
+- Company and product names (e.g. Google, OpenAI, Nvidia) take FEMININE grammatical agreement in Somali (waxay/ay/-tay), never masculine (wuxuu/uu/-ay).
+- Each scene's voiceover should be roughly ${approxWordsPerScene} words — enough to comfortably fill ~${Math.round(targetDuration / sceneCount)} seconds of natural spoken pacing (about 2-3 words per second), not more.
+
+STRUCTURE (exactly 6 scenes, in order):
+1. Hook — state the problem or surprising fact that makes someone stop scrolling in the first 2-3 seconds. Never open with a generic greeting or announcement like "Asc dhammaan", "Maanta waxaan ka hadlaynaa...", or "Ku soo dhawaada..." — lead with the curiosity or value itself, e.g. the style of "AI-kan wuxuu kuu qaban karaa shaqo aad saacado ku qaadan lahayd."${hasBrief ? ' If the brief above asks for something specific here (e.g. no separate intro, open immediately on a result, a particular hook angle), follow it exactly — but express it purely as content, never as a spoken instruction.' : ''}
+2-5. Explanation — build the idea step by step with concrete, specific detail (not vague generalities). Each scene must be visually and narratively distinct from the others — no repeated concepts.
+6. Outro/CTA — close with an inspiring one-line takeaway, and set caption to exactly "Ku Xirnow Xeero AI!" (voiceover can vary but should invite the viewer to follow Xeero AI).
+
+VISUAL FIELDS (English):
+- "visualObjective", "cameraComposition", "visualPrompt", "flowPrompt", and "visualKeywords" must be written in English, describing a premium, cinematic, Bloomberg/Reuters-editorial-style 9:16 visual specific to that exact scene's content — never generic stock-photo description.
+- "visualPrompt" is for a still image generator; "flowPrompt" is for a video generator and must start with "Vertical 9:16 cinematic" and end with "24fps".
+- If the same person, product, or setting reasonably recurs across multiple scenes, describe their visual details (appearance, clothing, environment) identically every time they appear, so the Reel reads as one continuous world rather than six unrelated images.
+
+Return ONLY the structured data — no extra commentary.`;
+}
+
+
+/**
 
  * Generate a complete, coherent 6-scene Somali Reel script.
 
@@ -1556,7 +1277,7 @@ export async function generateSomaliScript(params: ScriptGenerationParams): Prom
 
   scenes: GeneratedSceneScript[];
 
-  scriptSource: 'gemini' | 'openai' | 'offline_template';
+  scriptSource: 'openai' | 'offline_template';
 
   scriptFallbackReason?: string;
 
@@ -1567,7 +1288,7 @@ export async function generateSomaliScript(params: ScriptGenerationParams): Prom
   // The user's raw brief may arrive split across `description` and/or the
   // legacy `customScript` param. Both are PRODUCTION INSTRUCTIONS for the AI
   // interpreter below to read and follow — never literal narration. They are
-  // merged into a single brief and handed to Gemini as context; nothing here
+  // merged into a single brief and handed to the AI as context; nothing here
   // ever splits this text into per-line voiceover, which is what previously
   // let raw instructions (e.g. "Ha isticmaalin intro. Scene kasta ha la
   // jaanqaado hadalka.") get read aloud verbatim by Ubax.
@@ -1582,20 +1303,18 @@ export async function generateSomaliScript(params: ScriptGenerationParams): Prom
 
   let blueprints: SceneBlueprint[] = [];
 
-  let usedGeminiScript = false;
-
   let usedOpenAiScript = false;
 
 
   // =========================================================================
 
-  // Case 1: Real AI Generation via Gemini (any topic, not limited to the
+  // Case 1: Real AI script generation (any topic, not limited to the
 
   // fixed template domains below). The brief (topic + description +
 
   // customScript) is interpreted by the model as production instructions —
 
-  // see the prompt in generateScenesWithGemini for the enforced separation
+  // see buildScriptPrompt for the enforced separation
 
   // between instructions and spoken narration. Falls through silently to the
 
@@ -1613,11 +1332,8 @@ export async function generateSomaliScript(params: ScriptGenerationParams): Prom
 
   // OpenAI writes the script first whenever it is configured: it is the
 
-  // provider this deployment funds, so leading with Gemini would spend a
-
-  // failed call before reaching it. Gemini runs when it is the only key set,
-
-  // or as a backstop. The offline templates are the last resort only — they
+  // only script provider. The offline templates are the last resort only —
+  // they
 
   // are canned content about a fixed set of subjects, so a reel built from
 
@@ -1658,50 +1374,9 @@ export async function generateSomaliScript(params: ScriptGenerationParams): Prom
   }
 
 
-  if (blueprints.length === 0 && process.env.GEMINI_API_KEY) {
-
-    try {
-
-      const aiResult = await generateScenesWithGemini({
-
-        topic: cleanTopic,
-
-        description: brief,
-
-        targetDuration,
-
-      });
-
-      blueprints = aiResult.scenes;
-
-      usedGeminiScript = true;
-
-      aiGeneratedTitle = aiResult.title;
-
-      scriptFallbackReason = undefined;
-
-      console.log(`[ScriptGenerator] Generated script via Gemini (${blueprints.length} scenes) for topic: "${cleanTopic}"`);
-
-    } catch (err: any) {
-
-      const geminiReason = err?.message || 'Gemini script generation failed';
-
-      console.warn(`[ScriptGenerator] Gemini script generation failed: ${geminiReason}`);
-
-      scriptFallbackReason = scriptFallbackReason
-
-        ? `${scriptFallbackReason} | Gemini: ${geminiReason}`
-
-        : geminiReason;
-
-    }
-
-  }
-
-
   if (blueprints.length === 0 && !scriptFallbackReason) {
 
-    scriptFallbackReason = 'No AI script provider is configured (set OPENAI_API_KEY or GEMINI_API_KEY)';
+    scriptFallbackReason = 'No AI script provider is configured (set OPENAI_API_KEY)';
 
   }
 
@@ -1762,15 +1437,7 @@ export async function generateSomaliScript(params: ScriptGenerationParams): Prom
   // A canned template script is not about the user's topic at all, so a
   // silent fallback ships a reel about the wrong subject. Report which
   // source produced this script, and why, so the app can say so plainly.
-  const scriptSource: 'gemini' | 'openai' | 'offline_template' = usedGeminiScript
-
-    ? 'gemini'
-
-    : usedOpenAiScript
-
-    ? 'openai'
-
-    : 'offline_template';
+  const scriptSource: 'openai' | 'offline_template' = usedOpenAiScript ? 'openai' : 'offline_template';
 
   if (scriptSource === 'offline_template') {
 
@@ -1790,7 +1457,7 @@ export async function generateSomaliScript(params: ScriptGenerationParams): Prom
 
     scriptSource,
 
-    scriptFallbackReason: scriptSource === 'offline_template' ? (scriptFallbackReason || 'Gemini script generation was unavailable') : undefined,
+    scriptFallbackReason: scriptSource === 'offline_template' ? (scriptFallbackReason || 'AI script generation was unavailable') : undefined,
 
   };
 
