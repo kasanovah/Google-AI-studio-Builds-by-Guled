@@ -52,6 +52,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         }
       }
 
+      if (data.pexels) {
+        if (!data.pexels.configured) {
+          lines.push('', 'PEXELS: not configured (no PEXELS_API_KEY set)');
+        } else {
+          lines.push('', `PEXELS ${data.pexels.ok ? 'OK' : 'FAILED'}${data.pexels.results ? ` — ${data.pexels.results} photos found` : ''}`);
+          if (data.pexels.error) lines.push(`  ${data.pexels.error}`);
+        }
+      }
+
       if (data.modelListError) lines.push('', `Model list error: ${data.modelListError}`);
       if (Array.isArray(data.imageCapableModels)) {
         lines.push('', `Models available (${data.imageCapableModels.length}): ${data.imageCapableModels.join(', ') || 'none'}`);

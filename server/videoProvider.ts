@@ -425,6 +425,10 @@ export async function diagnoseImageGeneration(): Promise<Record<string, unknown>
     report.verdict = `OpenAI image generation works (${openai.model}) — this is the provider scenes use first.`;
   } else if (working) {
     report.verdict = `Gemini image generation works with "${working.model}".`;
+  } else if (openAiOutOfCredit && geminiOutOfCredit && pexels.ok) {
+    // Pexels covers the images for free, so only the script is actually
+    // degraded here — saying "placeholder graphic" would be wrong.
+    report.verdict = 'Both AI providers are out of credit, but Pexels is working — scenes will use real stock photography instead of the placeholder card. Only the script still falls back to the canned template, which needs credit at platform.openai.com/settings/organization/billing or ai.studio/projects.';
   } else if (openAiOutOfCredit && geminiOutOfCredit) {
     // Both providers billed out is the one case no code change can fix, so
     // say exactly that rather than implying something is misconfigured.
