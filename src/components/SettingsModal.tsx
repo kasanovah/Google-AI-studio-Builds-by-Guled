@@ -61,6 +61,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         }
       }
 
+      if (Array.isArray(data.environment)) {
+        lines.push('', 'KEYS THE SERVER RECEIVED:');
+        if (data.environment.length === 0) {
+          lines.push('  (none — no API key variables reached the container)');
+        } else {
+          for (const entry of data.environment) lines.push(`  ${entry}`);
+        }
+      }
+
       if (data.modelListError) lines.push('', `Model list error: ${data.modelListError}`);
       if (Array.isArray(data.imageCapableModels)) {
         lines.push('', `Models available (${data.imageCapableModels.length}): ${data.imageCapableModels.join(', ') || 'none'}`);

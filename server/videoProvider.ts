@@ -255,6 +255,18 @@ export async function diagnoseImageGeneration(): Promise<Record<string, unknown>
 
   const report: Record<string, unknown> = { openai, pexels };
 
+  // Which key-shaped variables the container actually received, by NAME only —
+  // never a value. A misspelled name shows up here as itself, which is the
+  // one thing that cannot be diagnosed from "not configured" alone, and a
+  // pasted-but-empty value shows as EMPTY rather than looking absent.
+  report.environment = Object.keys(process.env)
+    .filter((name) => /API_KEY|OPENAI|PEXELS|GEMINI/i.test(name))
+    .sort()
+    .map((name) => {
+      const value = (process.env[name] || '').trim();
+      return `${name} = ${value ? `set (${value.length} chars)` : 'EMPTY'}`;
+    });
+
   const openAiOutOfCredit =
     typeof openai.error === 'string' &&
     /no credits remaining|insufficient_quota|exceeded your current quota|billing/i.test(openai.error);
